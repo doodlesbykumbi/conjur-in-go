@@ -1,0 +1,14 @@
+Loaded policy 'root'
+{
+  "created_roles": {
+    "myConjurAccount:user:Dave@BotApp": {
+      "id": "myConjurAccount:user:Dave@BotApp",
+      "api_key": "31pf99rzkww6g2pk31qa1aw6sxaxse8yz37akdmt3j075t23s8yk8a"
+    },
+    "myConjurAccount:host:BotApp/myDemoApp": {
+      "id": "myConjurAccount:host:BotApp/myDemoApp",
+      "api_key": "2g20jpw3yjjzz4sr7m75wzb6kk6dm2h81b5vkpr26ajv2v41f3je"
+    }
+  },
+  "version": 1
+}
