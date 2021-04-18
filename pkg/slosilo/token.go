@@ -7,11 +7,6 @@ import (
 	"time"
 )
 
-type Token struct {
-	Header map[string]interface{} // protected
-	Claims map[string]interface{} // payload
-}
-
 type ParsedToken struct {
 	protected []byte
 	payload []byte

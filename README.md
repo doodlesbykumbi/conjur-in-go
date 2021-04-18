@@ -8,7 +8,7 @@ you're good to Go :_)
 Currently supports
 + authn, authz, secret retrieval
 
-Like Conjur in Ruby, this server uses the data key to decrypt all the things (secrets, tokenSigningPrivateKey etc.) from the database.
+Like Conjur in Ruby, this server uses the datakey to decrypt/encrypt all the things (secrets, tokenSigningPrivateKey etc.) from and to the database.
 
 Authn, though it doesn't verify your api key it allows you to assume the user you pass in.
 Like Conjur the account needs an associated tokenSigningPrivateKey in the slosilo keystore. 
@@ -16,7 +16,7 @@ The token is used both to sign new access tokens, and to verify access tokens as
 Also supports base64 encoding of the token.
 ```shell
 curl -X POST \
-  -H 'ccept-Encoding: base64' \
+  -H 'Accept-Encoding: base64' \
   -v \
   "http://localhost:8000/authn/myConjurAccount/Dave@BotApp/authenticate"
 ```
@@ -29,6 +29,18 @@ curl \
   -H 'Authorization: Token token="'$token'"' \
   -v \
   "http://localhost:8000/secrets/myConjurAccount/variable/BotApp%2FsecretVar"
+```
+
+## Run
+
+Build and run
+
+```shell
+go build -o conjurctl ./cmd/conjurctl
+
+DATABASE_URL="postgres://postgres@localhost/postgres" \
+CONJUR_DATA_KEY="2AP/N4ajPY3rsjpaIagjjA+JHjDbIw+hI+uI32jnrP4=" \
+ ./conjurctl server
 ```
 
 ## Development
@@ -64,6 +76,6 @@ This really helps while tinkering. You can see all the tables and explore the Co
 
 1. OpenTelemetry, get some metrics and traces going.
 2. This could be used to create a lightweight "Conjur" that has a, say, in-memory backing 
-   store for extremely fast reads. In this case the server needs to just do authn, authz and secrets fetching. Who knows the kinds of perfomance you could squeze.
+   store for extremely fast reads. In this case the server needs to just do authn, authz and secrets fetching. Who knows the kinds of performance you could squeeze.
 3. Refactor + unit tests should be fun.
 

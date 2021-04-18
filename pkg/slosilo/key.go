@@ -12,6 +12,8 @@ import (
 
 type Key struct {
 	privateKey *rsa.PrivateKey
+	fingerprint string // if you change the privateKey you'll also have to reset the
+	// fingerprint
 }
 
 func NewKey(pkeyDer []byte) (*Key, error) {
@@ -81,11 +83,16 @@ func (k Key) Verify(value, signature []byte) error  {
 	return rsa.VerifyPKCS1v15(&k.privateKey.PublicKey, crypto.Hash(0), sha256Digest(value), signature)
 }
 
-func (k Key) Fingerprint() (string, error)  {
-	der, err := x509.MarshalPKIXPublicKey(&k.privateKey.PublicKey)
-	if err != nil {
-		return "", err
+func (k Key) Fingerprint() string  {
+	if len(k.fingerprint) > 0 {
+		return k.fingerprint
 	}
 
-	return hex.EncodeToString(sha256Digest(der)), nil
+	der, err := x509.MarshalPKIXPublicKey(&k.privateKey.PublicKey)
+	if err != nil {
+		return ""
+	}
+
+	k.fingerprint = hex.EncodeToString(sha256Digest(der))
+	return k.fingerprint
 }
