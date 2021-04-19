@@ -1,13 +1,9 @@
 package store
 
-import (
-	"database/sql"
-)
-
 type StoredKey struct {
-	Id          string
+	Id          string `silo:"aad"`
 	Fingerprint string
-	Key         sql.RawBytes
+	Key         string `silo:"encrypted"`
 }
 
 func (_ StoredKey) TableName() string {

@@ -1,12 +1,8 @@
 package model
 
-import (
-	"database/sql"
-)
-
 type Secret struct {
-	ResourceId string
-	Value      sql.RawBytes
+	ResourceId string `silo:"aad"`
+	Value      string `silo:"encrypted"`
 }
 
 func (s Secret) TableName() string {
