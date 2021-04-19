@@ -82,13 +82,8 @@ func RegisterSecretReadEndpoint(server *server.Server) {
 				http.Error(writer, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			secretValue, err := keystore.Cipher().Decrypt([]byte(secret.ResourceId), secret.Value)
-			if err != nil {
-				http.Error(writer, err.Error(), http.StatusInternalServerError)
-				return
-			}
 
-			writer.Write(secretValue)
+			writer.Write([]byte(secret.Value))
 		},
 	).Methods("GET")
 }

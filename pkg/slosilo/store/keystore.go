@@ -34,12 +34,15 @@ func NewKeyStore(db *gorm.DB, dataKey []byte) (*KeyStore, error) {
 		return nil, err
 	}
 
-	return &KeyStore{
+	keystore := &KeyStore{
 		cipher:            cipher,
 		db:                db,
 		keysById:          map[string]*Key{},
 		keysByFingerprint: map[string]*Key{},
-	}, nil
+	}
+
+	db.Use(NewPlugin(WithKeyStore(keystore)))
+	return keystore, nil
 }
 
 func (k KeyStore) fetchKey(query *StoredKey) (*Key, error) {
@@ -58,12 +61,7 @@ func (k KeyStore) fetchKey(query *StoredKey) (*Key, error) {
 		return nil, err
 	}
 
-	decryptedKey, err := k.cipher.Decrypt([]byte(storedKey.Id), storedKey.Key)
-	if err != nil {
-		return nil, err
-	}
-
-	keyInstance, err := slosilo.NewKey(decryptedKey)
+	keyInstance, err := slosilo.NewKey([]byte(storedKey.Key))
 	if err != nil {
 		return nil, err
 	}
@@ -99,5 +97,5 @@ func (k KeyStore) Cipher() *slosilo.Symmetric {
 }
 
 func (k KeyStore) ByAccount(account string) (*Key, error) {
-	return k.fetchKey(&StoredKey{Id: "authn:"+account})
+	return k.fetchKey(&StoredKey{Id: "authn:" + account})
 }
