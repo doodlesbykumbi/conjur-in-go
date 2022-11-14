@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"log"
@@ -12,9 +13,9 @@ import (
 
 	"conjur-in-go/pkg/server"
 	"conjur-in-go/pkg/server/endpoints"
+	"conjur-in-go/pkg/slosilo"
 	"conjur-in-go/pkg/slosilo/store"
 )
-
 
 // NOTES
 // tokenSigningPrivateKey is stored in slosilo keystore
@@ -42,6 +43,12 @@ To run the server requires the environment variables CONJUR_DATA_KEY and DATABAS
 			os.Exit(1)
 		}
 
+		cipher, err := slosilo.NewSymmetric(dataKey)
+		if err != nil {
+			fmt.Println("Unable to initiate cipher:", err)
+			os.Exit(1)
+		}
+
 		db, err := gorm.Open(
 			postgres.New(
 				postgres.Config{
@@ -49,25 +56,22 @@ To run the server requires the environment variables CONJUR_DATA_KEY and DATABAS
 					PreferSimpleProtocol: true, // disables implicit prepared statement usage
 				},
 			),
-			&gorm.Config{
-			},
+			&gorm.Config{},
 		)
 		if err != nil {
 			fmt.Println("Unable to connect to DB:", err)
 			os.Exit(1)
 		}
+		ctx := context.WithValue(context.Background(), "cipher", cipher)
+		db = db.WithContext(ctx)
 
-		keystore, err := store.NewKeyStore(db, dataKey)
-		if err != nil {
-			fmt.Println("Unable to initiate keystore:", err)
-			os.Exit(1)
-		}
+		keystore := store.NewKeyStore(db)
 
 		host, _ := cmd.Flags().GetString("bind-address")
 		port, _ := cmd.Flags().GetString("port")
 		s := server.NewServer(keystore, db, host, port)
 
-		endpoints.RegisterSecretReadEndpoint(s)
+		endpoints.RegisterSecretsEndpoints(s)
 		endpoints.RegisterAuthenticateEndpoint(s)
 
 		log.Printf("Running server at http://%s:%s...\n", host, port)

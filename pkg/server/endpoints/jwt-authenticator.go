@@ -25,7 +25,7 @@ func roleId(account string, login string) string {
 
 	return strings.Join(
 		[]string{
-			account, tokens[0], strings.Join(tokens[1:],"/"),
+			account, tokens[0], strings.Join(tokens[1:], "/"),
 		},
 		":",
 	)
@@ -42,7 +42,8 @@ func (j JWTAuthenticator) Instrument(next http.Handler) http.Handler {
 		}
 
 		tokenMatches := tokenRegex.FindStringSubmatch(authHeader)
-		if len(tokenMatches) < 1 {
+
+		if len(tokenMatches) != 2 {
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte("Malformed authorization header"))
 			return
@@ -103,4 +104,3 @@ func (j JWTAuthenticator) Instrument(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-

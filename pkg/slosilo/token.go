@@ -9,14 +9,17 @@ import (
 
 type ParsedToken struct {
 	protected []byte
-	payload []byte
+	payload   []byte
 	signature []byte
-	header map[string]interface{}
-	claims map[string]interface{}
+	header    map[string]interface{}
+	claims    map[string]interface{}
 }
 
-var malformedToken = errors.New("malformed token")
-var invalidToken = errors.New("invalid token")
+var malformedToken = errors.New("Malformed token")
+
+// invalidToken error message copied from
+// https://github.com/cyberark/conjur-rack/blob/master/lib/conjur/rack/authenticator.rb#L103
+var invalidToken = errors.New("Invalid token")
 
 func unmarshallJsonFromB64(rawB64 string) ([]byte, map[string]interface{}, error) {
 	raw, err := base64.URLEncoding.DecodeString(rawB64)
@@ -30,10 +33,10 @@ func unmarshallJsonFromB64(rawB64 string) ([]byte, map[string]interface{}, error
 		return nil, nil, err
 	}
 
-	return raw, res,  nil
+	return raw, res, nil
 }
 
-func NewParsedToken(raw []byte) (*ParsedToken, error)  {
+func NewParsedToken(raw []byte) (*ParsedToken, error) {
 	var tmpToken map[string]string
 	err := json.Unmarshal(raw, &tmpToken)
 	if err != nil {
@@ -64,15 +67,12 @@ func NewParsedToken(raw []byte) (*ParsedToken, error)  {
 		protected: protected,
 		payload:   payload,
 		signature: signature,
-		claims: claims,
-		header: header,
+		claims:    claims,
+		header:    header,
 	}, nil
 }
 
-// TODO: this needs to be more sophisticated
-//  Conjur in ruby forces the thing being signed to be encoded in ASCII-8BIT
-//  https://github.com/cyberark/slosilo/blob/master/lib/slosilo/key.rb#L198-L202
-func (p ParsedToken) Verify(verifier func(kid string, protected, payload, signature[]byte) (string, bool)) (string, bool) {
+func (p ParsedToken) Verify(verifier func(kid string, protected, payload, signature []byte) (string, bool)) (string, bool) {
 	return verifier(p.Kid(), p.protected, p.payload, p.signature)
 }
 

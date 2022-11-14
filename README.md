@@ -6,7 +6,7 @@ replicate and better understand [slosilo](https://github.com/cyberark/slosilo). 
 you're good to Go :_)
 
 Currently supports
-+ authn, authz, secret retrieval
++ authn, authz, secret write + secret retrieval
 
 Like Conjur in Ruby, this server uses the datakey to decrypt/encrypt all the things (secrets, tokenSigningPrivateKey etc.) from and to the database.
 
@@ -21,7 +21,7 @@ curl -X POST \
   "http://localhost:8000/authn/myConjurAccount/Dave@BotApp/authenticate"
 ```
 
-Secret retrieval + authn + authz. For authn, as with Conjur in Ruby, tokens are verified against the token signing keys (from the slosilo keystore) based on the key id + fingerprint. From authn, we get the identity and use the stored procedure (`is_role_allowed_to`) to check for permissions before
+Secret writing + secret retrieval + authn + authz. For authn, as with Conjur in Ruby, tokens are verified against the token signing keys (from the slosilo keystore) based on the key id + fingerprint. From authn, we get the identity and use the stored procedure (`is_role_allowed_to`) to check for permissions before
 serving secrets to authenticated users. The data key is used to decrypt the secrets from the db.
 ```shell
 token=...

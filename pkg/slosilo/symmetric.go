@@ -12,11 +12,15 @@ const ivSize = 12
 const tagSize = aes.BlockSize
 const versionMagic = byte('G')
 
+type SymmetricCipher interface {
+	Decrypt(aad, packedText []byte) ([]byte, error)
+	Encrypt(aad, plainText []byte) ([]byte, error)
+}
 type Symmetric struct {
 	aesgcm cipher.AEAD
 }
 
-func NewSymmetric(key []byte) (*Symmetric, error) {
+func NewSymmetric(key []byte) (SymmetricCipher, error) {
 	c, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -26,7 +30,6 @@ func NewSymmetric(key []byte) (*Symmetric, error) {
 	if err != nil {
 		return nil, err
 	}
-
 
 	return &Symmetric{aesgcm: aesgcm}, nil
 }
@@ -56,7 +59,7 @@ func RandomBytes(size int) ([]byte, error) {
 	return value, nil
 }
 
-func (s Symmetric) Encrypt(aad, plainText, nonce []byte) ([]byte, error) {
+func (s Symmetric) encrypt(aad, plainText, nonce []byte) ([]byte, error) {
 	if len(nonce) < ivSize {
 		return nil, errors.New("nonce size is too short")
 	}
@@ -65,6 +68,15 @@ func (s Symmetric) Encrypt(aad, plainText, nonce []byte) ([]byte, error) {
 	packedText := PackCipherData(cipherTextWithTag, nonce)
 
 	return packedText, nil
+}
+
+func (s Symmetric) Encrypt(aad, plainText []byte) ([]byte, error) {
+	nonce, err := RandomNonce()
+	if err != nil {
+		return nil, err
+	}
+
+	return s.encrypt(aad, plainText, nonce)
 }
 
 func PackCipherData(cipherTextWithTag []byte, iv []byte) []byte {
@@ -103,7 +115,6 @@ func UnpackCipherData(packedText []byte) ([]byte, []byte) {
 	nextIndex := index + tagSize
 	tag := packedText[index:nextIndex]
 	index = nextIndex
-
 
 	nextIndex = index + ivSize
 	iv := packedText[index:nextIndex]

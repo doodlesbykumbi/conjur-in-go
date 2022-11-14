@@ -12,7 +12,6 @@ import (
 	"conjur-in-go/pkg/utils"
 )
 
-
 func TestName(t *testing.T) {
 	testDataKey, _ := base64.StdEncoding.DecodeString("2AP/N4ajPY3rsjpaIagjjA+JHjDbIw+hI+uI32jnrP4=")
 
@@ -129,7 +128,7 @@ func TestName(t *testing.T) {
 		return
 		newjwt := map[string]string{
 			"protected": base64.URLEncoding.EncodeToString([]byte(newheader)),
-			"payload": base64.URLEncoding.EncodeToString([]byte(newclaims)),
+			"payload":   base64.URLEncoding.EncodeToString([]byte(newclaims)),
 			"signature": base64.URLEncoding.EncodeToString(newsignature),
 		}
 
@@ -184,7 +183,7 @@ func TestName(t *testing.T) {
 		)
 		newjwt := map[string]string{
 			"protected": base64.URLEncoding.EncodeToString([]byte(newheader)),
-			"payload": base64.URLEncoding.EncodeToString([]byte(newclaims)),
+			"payload":   base64.URLEncoding.EncodeToString([]byte(newclaims)),
 			"signature": base64.URLEncoding.EncodeToString(newsignature),
 		}
 

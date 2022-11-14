@@ -15,16 +15,16 @@ import (
 type Server struct {
 	Keystore *store.KeyStore
 	Router   *mux.Router
-	DB   *gorm.DB
-	srv *http.Server
+	DB       *gorm.DB
+	srv      *http.Server
 }
 
 func NewServer(
 	keystore *store.KeyStore,
-	db   *gorm.DB,
+	db *gorm.DB,
 	host string,
 	port string,
-	) *Server {
+) *Server {
 
 	router := mux.NewRouter().UseEncodedPath()
 	srv := &http.Server{
@@ -35,12 +35,11 @@ func NewServer(
 		ReadTimeout:  15 * time.Second,
 	}
 
-
 	return &Server{
 		Keystore: keystore,
 		Router:   router,
 		DB:       db,
-		srv: srv,
+		srv:      srv,
 	}
 }
 

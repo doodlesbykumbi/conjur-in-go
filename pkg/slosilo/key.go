@@ -11,9 +11,9 @@ import (
 )
 
 type Key struct {
-	privateKey *rsa.PrivateKey
+	privateKey  *rsa.PrivateKey
 	fingerprint string // if you change the privateKey you'll also have to reset the
-	// fingerprint
+	// fingerprint. Currently lazy loaded!
 }
 
 func NewKey(pkeyDer []byte) (*Key, error) {
@@ -31,40 +31,40 @@ func sha256Digest(value []byte) []byte {
 	return hash.Sum(nil)
 }
 
-func (k Key) PrivateRSAPem() []byte  {
+func (k Key) PrivateRSAPem() []byte {
 	return pem.EncodeToMemory(
 		&pem.Block{
-			Type: "RSA PRIVATE KEY",
+			Type:  "RSA PRIVATE KEY",
 			Bytes: x509.MarshalPKCS1PrivateKey(k.privateKey),
 		},
 	)
 }
 
-func (k Key) PublicPem() []byte  {
+func (k Key) PublicPem() []byte {
 	bytes, err := x509.MarshalPKIXPublicKey(&k.privateKey.PublicKey)
 	if err != nil {
 		panic(err)
 	}
 	return pem.EncodeToMemory(
 		&pem.Block{
-			Type: "PUBLIC KEY",
+			Type:  "PUBLIC KEY",
 			Bytes: bytes,
 		},
 	)
 }
 
-func (k Key) PublicRSAPem() []byte  {
+func (k Key) PublicRSAPem() []byte {
 	bytes := x509.MarshalPKCS1PublicKey(&k.privateKey.PublicKey)
 
 	return pem.EncodeToMemory(
 		&pem.Block{
-			Type: "RSA PUBLIC KEY",
+			Type:  "RSA PUBLIC KEY",
 			Bytes: bytes,
 		},
 	)
 }
 
-func (k Key) Sign(value, salt []byte) ([]byte, error)  {
+func (k Key) Sign(value, salt []byte) ([]byte, error) {
 	value = concat(salt, value)
 
 	signature, err := rsa.SignPKCS1v15(rand.Reader, k.privateKey, crypto.Hash(0), sha256Digest(value))
@@ -75,15 +75,15 @@ func (k Key) Sign(value, salt []byte) ([]byte, error)  {
 	return concat(signature, salt), nil
 }
 
-func (k Key) Verify(value, signature []byte) error  {
-	salt := signature[len(signature) - 32:]
-	signature = signature[:len(signature) - 32]
+func (k Key) Verify(value, signature []byte) error {
+	salt := signature[len(signature)-32:]
+	signature = signature[:len(signature)-32]
 
 	value = concat(salt, value)
 	return rsa.VerifyPKCS1v15(&k.privateKey.PublicKey, crypto.Hash(0), sha256Digest(value), signature)
 }
 
-func (k Key) Fingerprint() string  {
+func (k Key) Fingerprint() string {
 	if len(k.fingerprint) > 0 {
 		return k.fingerprint
 	}
