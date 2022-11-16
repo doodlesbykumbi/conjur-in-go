@@ -144,6 +144,9 @@ func doRequest(port int, use_cache bool) {
 	r, _ := http.NewRequest("GET", target_url, nil)
 	r.Header.Add("Authorization", fmt.Sprintf("Token token=%q", token))
 	_, _ = http.DefaultClient.Do(r)
-	// resp, _ := http.DefaultClient.Do(r)
+	// resp, err := http.DefaultClient.Do(r)
+	// if err != nil {
+	// 	panic(err)
+	// }
 	// fmt.Println(resp.StatusCode)
 }
