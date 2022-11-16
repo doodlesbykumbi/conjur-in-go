@@ -6,6 +6,7 @@ require (
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/gorilla/handlers v1.5.1
 	github.com/gorilla/mux v1.8.0
+	github.com/lib/pq v1.10.7
 	github.com/spf13/cobra v1.1.3
 	gorm.io/driver/postgres v1.0.8
 	gorm.io/gorm v1.21.8
