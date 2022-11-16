@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 
+	redis "github.com/go-redis/redis/v8"
 	"github.com/spf13/cobra"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -62,6 +63,14 @@ To run the server requires the environment variables CONJUR_DATA_KEY and DATABAS
 			fmt.Println("Unable to connect to DB:", err)
 			os.Exit(1)
 		}
+
+		rdb := redis.NewClient(&redis.Options{
+			Addr:     "localhost:6379",
+			Password: "", // no password set
+			DB:       0,  // use default DB
+		})
+		defer rdb.Close()
+
 		ctx := context.WithValue(context.Background(), "cipher", cipher)
 		db = db.WithContext(ctx)
 
@@ -69,7 +78,7 @@ To run the server requires the environment variables CONJUR_DATA_KEY and DATABAS
 
 		host, _ := cmd.Flags().GetString("bind-address")
 		port, _ := cmd.Flags().GetString("port")
-		s := server.NewServer(keystore, db, host, port)
+		s := server.NewServer(keystore, db, rdb, host, port)
 
 		endpoints.RegisterSecretsEndpoints(s)
 		endpoints.RegisterAuthenticateEndpoint(s)

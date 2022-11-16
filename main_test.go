@@ -37,7 +37,7 @@ func TestName(t *testing.T) {
 			t.Fatal("PublicDecrypt failed")
 		}
 
-		encSecretValue, _ := cipher.Encrypt(add, expectedSecretValue, nonce)
+		encSecretValue, _ := cipher.Encrypt(add, expectedSecretValue)
 
 		if string(encSecretValue) != string(expectedEncSecretValue) {
 			t.Fatal("Encrypt failed")

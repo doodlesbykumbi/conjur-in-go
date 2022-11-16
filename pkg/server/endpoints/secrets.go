@@ -1,6 +1,8 @@
 package endpoints
 
 import (
+	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -12,6 +14,7 @@ import (
 
 	"conjur-in-go/pkg/model"
 	"conjur-in-go/pkg/server"
+	"conjur-in-go/pkg/slosilo"
 )
 
 func fetchSecret(db *gorm.DB, resourceId string, secretVersion string) (*model.Secret, error) {
@@ -40,6 +43,7 @@ func RegisterSecretsEndpoints(server *server.Server) {
 	keystore := server.Keystore
 	router := server.Router
 	db := server.DB
+	cache := server.Cache
 
 	// TODO: this isn't right. The middleware should be available everywhere for consumption by multiple routes
 	jwtMiddleware := &JWTAuthenticator{
@@ -52,6 +56,7 @@ func RegisterSecretsEndpoints(server *server.Server) {
 		"/{account}/{kind}/{identifier:.+}", // For 'identifier' we grab the rest of the URL including slashes
 		func(writer http.ResponseWriter, request *http.Request) {
 			secretVersion := request.URL.Query().Get("version")
+			useCache := request.URL.Query().Has("use_cache")
 
 			vars := mux.Vars(request)
 			account := vars["account"]
@@ -82,8 +87,32 @@ func RegisterSecretsEndpoints(server *server.Server) {
 			}
 
 			// TODO: There's definitely a better model abstraction here
+
+			// TODO: find a way to store version in redis
+			if useCache {
+				hexVal, err := cache.Get(context.Background(), resourceId).Result()
+				if err != nil {
+					http.Error(writer, err.Error(), http.StatusBadRequest)
+					return
+				}
+				bytesVal, err := base64.StdEncoding.DecodeString(hexVal)
+				if err != nil {
+					http.Error(writer, err.Error(), http.StatusBadRequest)
+					return
+				}
+				secretValue, err := db.Statement.Context.Value("cipher").(slosilo.SymmetricCipher).Decrypt([]byte(resourceId), bytesVal)
+				if err != nil {
+					http.Error(writer, "bad encryption", http.StatusBadRequest)
+					return
+				}
+
+				writer.Write(secretValue)
+				return
+			}
+
 			secret, err := fetchSecret(db, resourceId, secretVersion)
 			if err != nil {
+
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					respondWithError(writer, http.StatusNotFound, map[string]string{"message": "secret is empty or not found."})
 					return
@@ -134,15 +163,18 @@ func RegisterSecretsEndpoints(server *server.Server) {
 			}
 
 			// TODO: There's definitely a better model abstraction here
-			tx := db.Create(&model.Secret{
+			secret := model.Secret{
 				ResourceId: resourceId,
 				Value:      newSecretValue,
-			})
+			}
+			fmt.Println(secret)
+			tx := db.Create(&secret)
 			err = tx.Error
 			if err != nil {
 				respondWithError(writer, http.StatusInternalServerError, map[string]string{"message": err.Error()})
 				return
 			}
+			fmt.Println(secret)
 
 			writer.WriteHeader(http.StatusCreated)
 		},

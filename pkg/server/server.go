@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	redis "github.com/go-redis/redis/v8"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
@@ -16,12 +17,14 @@ type Server struct {
 	Keystore *store.KeyStore
 	Router   *mux.Router
 	DB       *gorm.DB
+	Cache    *redis.Client
 	srv      *http.Server
 }
 
 func NewServer(
 	keystore *store.KeyStore,
 	db *gorm.DB,
+	cache *redis.Client,
 	host string,
 	port string,
 ) *Server {
@@ -39,6 +42,7 @@ func NewServer(
 		Keystore: keystore,
 		Router:   router,
 		DB:       db,
+		Cache:    cache,
 		srv:      srv,
 	}
 }
