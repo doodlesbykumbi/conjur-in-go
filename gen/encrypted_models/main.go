@@ -28,8 +28,7 @@ import (
 
 func (s *{{$structName}}) BeforeCreate(tx *gorm.DB) error {
 	encrypt := s.getCipherForDb(tx).Encrypt
-
-	{{- range $encryptedField := $encryptedStruct.Fields -}}
+{{ range $encryptedField := $encryptedStruct.Fields -}}
 	{{- $fieldName := $encryptedField.FieldName}}
 	{{- $aadFieldName := $encryptedField.AadFieldName}}
 	plain{{$fieldName}} := s.{{$fieldName}}
@@ -38,16 +37,13 @@ func (s *{{$structName}}) BeforeCreate(tx *gorm.DB) error {
 		return fmt.Errorf("{{$fieldName}} encryption failed for {{$aadFieldName}}=%q", s.{{$aadFieldName}})
 	}
 	s.{{$fieldName}} = encrypted{{$fieldName}}
-
-	{{- end }}
-
+{{ end }}
 	return nil
 }
 
 func (s *{{$structName}}) AfterFind(tx *gorm.DB) error {
 	decrypt := s.getCipherForDb(tx).Decrypt
-
-	{{- range $encryptedField := $encryptedStruct.Fields -}}
+{{ range $encryptedField := $encryptedStruct.Fields -}}
 	{{- $fieldName := $encryptedField.FieldName}}
 	{{- $aadFieldName := $encryptedField.AadFieldName}}
 	encrypted{{$fieldName}} := s.{{$fieldName}}
@@ -56,16 +52,13 @@ func (s *{{$structName}}) AfterFind(tx *gorm.DB) error {
 		return fmt.Errorf("{{$fieldName}} decryption failed for {{$aadFieldName}}=%q", s.{{$aadFieldName}})
 	}
 	s.{{$fieldName}} = plain{{$fieldName}}
-
-	{{- end }}
-
+{{ end }}
 	return nil
 }
 
 func (s *{{$structName}}) AfterCreate(tx *gorm.DB) error {
 	decrypt := s.getCipherForDb(tx).Decrypt
-
-	{{- range $encryptedField := $encryptedStruct.Fields -}}
+{{ range $encryptedField := $encryptedStruct.Fields -}}
 	{{- $fieldName := $encryptedField.FieldName}}
 	{{- $aadFieldName := $encryptedField.AadFieldName}}
 	encrypted{{$fieldName}} := s.{{$fieldName}}
@@ -74,9 +67,7 @@ func (s *{{$structName}}) AfterCreate(tx *gorm.DB) error {
 		return fmt.Errorf("{{$fieldName}} decryption failed for {{$aadFieldName}}=%q", s.{{$aadFieldName}})
 	}
 	s.{{$fieldName}} = plain{{$fieldName}}
-
-	{{- end }}
-
+{{ end }}
 	return nil
 }
 

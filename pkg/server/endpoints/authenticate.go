@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"golang.org/x/crypto/bcrypt"
 
 	"conjur-in-go/pkg/model"
 	"conjur-in-go/pkg/server"
@@ -137,4 +138,108 @@ func RegisterAuthenticateEndpoint(server *server.Server) {
 			writer.Write(newjwtJSON)
 		},
 	).Methods("POST")
+
+	router.HandleFunc(
+		"/authn/{account}/login",
+		func(writer http.ResponseWriter, request *http.Request) {
+			login, password, ok := request.BasicAuth()
+			if !ok {
+				http.Error(writer, "bad basic auth", http.StatusBadRequest)
+				return
+			}
+
+			vars := mux.Vars(request)
+			account := vars["account"]
+			roleId := roleIdFromLogin(account, login)
+
+			credential := model.Credential{}
+			tx := db.Where(&struct{ RoleId string }{RoleId: roleId}).First(&credential)
+			err := tx.Error
+			if err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			// Validate Password
+			err = bcrypt.CompareHashAndPassword(credential.EncryptedHash, []byte(password))
+			if err != nil {
+				writer.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+
+			writer.Write(credential.ApiKey)
+		},
+	).Methods("GET")
+
+	listResourcesPathSpecs := []string{"/resources/{account}", "/resources/{account}/{kind}"}
+	listResourcesHandler := func(writer http.ResponseWriter, request *http.Request) {
+		// vars := mux.Vars(request)
+		// account := vars["account"]
+		// kind := vars["kind"]
+		// identifier := vars["identifier"]
+
+		// if ok := subtle.ConstantTimeCompare(credential.ApiKey, requestApiKey); ok != 1 {
+		// 	writer.WriteHeader(http.StatusUnauthorized)
+		// 	return
+		// }
+
+		writer.Header().Add("Content-Type", "application/json")
+		writer.Write([]byte(`
+		[
+			{
+			  "created_at": "2017-07-25T06:30:38.768+00:00",
+			  "id": "myorg:variable:app-prod/db-password",
+			  "owner": "myorg:policy:app-prod",
+			  "policy": "myorg:policy:root",
+			  "permissions": [],
+			  "annotations": [],
+			  "secrets": [
+				{
+				  "version": 1
+				}
+			  ]
+			},
+			{
+			  "created_at": "2017-07-25T06:30:38.768+00:00",
+			  "id": "myorg:policy:app-prod",
+			  "owner": "myorg:user:admin",
+			  "policy": "myorg:policy:root",
+			  "permissions": [],
+			  "annotations": [],
+			  "policy_versions": []
+			}]`))
+	}
+	for _, listResourcesPathSpec := range listResourcesPathSpecs {
+		router.HandleFunc(
+			listResourcesPathSpec,
+			listResourcesHandler,
+		).Methods("GET")
+	}
+
+	router.HandleFunc(
+		"/resources/{account}/{kind}/{identifier:.+}",
+		func(writer http.ResponseWriter, request *http.Request) {
+			// vars := mux.Vars(request)
+			// account := vars["account"]
+			// kind := vars["kind"]
+			// identifier := vars["identifier"]
+
+			// if ok := subtle.ConstantTimeCompare(credential.ApiKey, requestApiKey); ok != 1 {
+			// 	writer.WriteHeader(http.StatusUnauthorized)
+			// 	return
+			// }
+
+			writer.Header().Add("Content-Type", "application/json")
+			writer.Write([]byte(`
+			{
+				"created_at": "2017-07-25T06:30:38.768+00:00",
+				"id": "myorg:variable:db/password",
+				"owner": "myorg:user:admin",
+				"policy": "myorg:policy:root",
+				"permissions": [],
+				"annotations": [],
+				"policy_versions": []
+			  }`))
+		},
+	).Methods("GET")
 }

@@ -30,6 +30,7 @@ func NewServer(
 ) *Server {
 
 	router := mux.NewRouter().UseEncodedPath()
+	router.StrictSlash(true)
 	srv := &http.Server{
 		Handler: handlers.LoggingHandler(os.Stdout, router),
 		Addr:    host + ":" + port,
@@ -37,6 +38,7 @@ func NewServer(
 		WriteTimeout: 15 * time.Second,
 		ReadTimeout:  15 * time.Second,
 	}
+	srv.Handler = handlers.CORS()(srv.Handler)
 
 	return &Server{
 		Keystore: keystore,

@@ -11,6 +11,7 @@ import (
 
 func (s *Secret) BeforeCreate(tx *gorm.DB) error {
 	encrypt := s.getCipherForDb(tx).Encrypt
+
 	plainValue := s.Value
 	encryptedValue, err := encrypt([]byte(s.ResourceId), plainValue)
 	if err != nil {
@@ -23,6 +24,7 @@ func (s *Secret) BeforeCreate(tx *gorm.DB) error {
 
 func (s *Secret) AfterFind(tx *gorm.DB) error {
 	decrypt := s.getCipherForDb(tx).Decrypt
+
 	encryptedValue := s.Value
 	plainValue, err := decrypt([]byte(s.ResourceId), encryptedValue)
 	if err != nil {
@@ -35,6 +37,7 @@ func (s *Secret) AfterFind(tx *gorm.DB) error {
 
 func (s *Secret) AfterCreate(tx *gorm.DB) error {
 	decrypt := s.getCipherForDb(tx).Decrypt
+
 	encryptedValue := s.Value
 	plainValue, err := decrypt([]byte(s.ResourceId), encryptedValue)
 	if err != nil {

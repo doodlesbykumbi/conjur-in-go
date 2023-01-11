@@ -15,6 +15,7 @@ import (
 	"conjur-in-go/pkg/model"
 	"conjur-in-go/pkg/server"
 	"conjur-in-go/pkg/slosilo"
+	"conjur-in-go/pkg/utils"
 )
 
 func fetchSecret(db *gorm.DB, resourceId string, secretVersion string) (*model.Secret, error) {
@@ -49,6 +50,16 @@ func RegisterSecretsEndpoints(server *server.Server) {
 	jwtMiddleware := &JWTAuthenticator{
 		keystore: keystore,
 	}
+
+	router.HandleFunc("/authn-oidc/demo/providers", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write(
+			[]byte(
+				utils.ToJson(map[string]interface{}{}),
+			),
+		)
+
+	})
 
 	secretsRouter := router.PathPrefix("/secrets").Subrouter()
 	secretsRouter.Use(jwtMiddleware.Instrument)

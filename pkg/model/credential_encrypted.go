@@ -11,6 +11,7 @@ import (
 
 func (s *Credential) BeforeCreate(tx *gorm.DB) error {
 	encrypt := s.getCipherForDb(tx).Encrypt
+
 	plainApiKey := s.ApiKey
 	encryptedApiKey, err := encrypt([]byte(s.RoleId), plainApiKey)
 	if err != nil {
@@ -18,29 +19,52 @@ func (s *Credential) BeforeCreate(tx *gorm.DB) error {
 	}
 	s.ApiKey = encryptedApiKey
 
+	plainEncryptedHash := s.EncryptedHash
+	encryptedEncryptedHash, err := encrypt([]byte(s.RoleId), plainEncryptedHash)
+	if err != nil {
+		return fmt.Errorf("EncryptedHash encryption failed for RoleId=%q", s.RoleId)
+	}
+	s.EncryptedHash = encryptedEncryptedHash
+
 	return nil
 }
 
 func (s *Credential) AfterFind(tx *gorm.DB) error {
 	decrypt := s.getCipherForDb(tx).Decrypt
+
 	encryptedApiKey := s.ApiKey
 	plainApiKey, err := decrypt([]byte(s.RoleId), encryptedApiKey)
 	if err != nil {
 		return fmt.Errorf("ApiKey decryption failed for RoleId=%q", s.RoleId)
 	}
 	s.ApiKey = plainApiKey
+
+	encryptedEncryptedHash := s.EncryptedHash
+	plainEncryptedHash, err := decrypt([]byte(s.RoleId), encryptedEncryptedHash)
+	if err != nil {
+		return fmt.Errorf("EncryptedHash decryption failed for RoleId=%q", s.RoleId)
+	}
+	s.EncryptedHash = plainEncryptedHash
 
 	return nil
 }
 
 func (s *Credential) AfterCreate(tx *gorm.DB) error {
 	decrypt := s.getCipherForDb(tx).Decrypt
+
 	encryptedApiKey := s.ApiKey
 	plainApiKey, err := decrypt([]byte(s.RoleId), encryptedApiKey)
 	if err != nil {
 		return fmt.Errorf("ApiKey decryption failed for RoleId=%q", s.RoleId)
 	}
 	s.ApiKey = plainApiKey
+
+	encryptedEncryptedHash := s.EncryptedHash
+	plainEncryptedHash, err := decrypt([]byte(s.RoleId), encryptedEncryptedHash)
+	if err != nil {
+		return fmt.Errorf("EncryptedHash decryption failed for RoleId=%q", s.RoleId)
+	}
+	s.EncryptedHash = plainEncryptedHash
 
 	return nil
 }
