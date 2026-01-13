@@ -1,0 +1,3 @@
+-- No down migration - this is an update to existing functions
+-- Matches: conjur/db/migrate/202403071709433_is_role_allowed_to_up.rb
+-- The previous version is in 000009_create_authz_functions

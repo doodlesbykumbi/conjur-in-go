@@ -1,0 +1,51 @@
+# Example Conjur policy
+# Load with: conjurctl policy load <account> examples/policy.yml
+
+# Create users and groups at root level
+- !user
+  id: alice
+  annotations:
+    description: Alice user
+
+- !user
+  id: bob
+  annotations:
+    description: Bob user
+
+- !group
+  id: developers
+  annotations:
+    description: Development team
+
+- !host
+  id: myapp
+  annotations:
+    description: My application host
+
+# Create variables for secrets
+- !variable
+  id: db/password
+  annotations:
+    description: Database password
+
+- !variable
+  id: db/username
+  annotations:
+    description: Database username
+
+# Grant developers group membership to alice
+- !grant
+  role: !group developers
+  member: !user alice
+
+# Permit developers to read db secrets
+- !permit
+  role: !group developers
+  privileges: [read, execute]
+  resource: !variable db/password
+
+# Permit myapp host to read db password
+- !permit
+  role: !host myapp
+  privileges: [read]
+  resource: !variable db/password

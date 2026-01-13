@@ -1,81 +1,111 @@
-# conjur-in-go
+# Conjur-in-Go
 
-[Conjur](https://github.com/cyberark/conjur) server written in Go. Written to be interoperable with Conjur in Ruby.
-This project started off mostly about exploring the crypto side of things, trying to
-replicate and better understand [slosilo](https://github.com/cyberark/slosilo). It turns out once you have that working 
-you're good to Go :_)
+A Go implementation of [CyberArk Conjur](https://github.com/cyberark/conjur), designed to be fully interoperable with Conjur OSS (Ruby). Both servers can share the same PostgreSQL database and serve requests interchangeably.
 
-Currently supports
-+ authn, authz, secret write + secret retrieval
+## Features
 
-Like Conjur in Ruby, this server uses the datakey to decrypt/encrypt all the things (secrets, tokenSigningPrivateKey etc.) from and to the database.
+### Core Functionality
+- **Authentication** - API key auth with JWT tokens, password updates, key rotation
+- **Authorization** - Full RBAC using PostgreSQL stored procedures
+- **Secrets Management** - Store, retrieve, version, and batch update secrets
+- **Policy Engine** - YAML policy parser supporting all resource types
+- **Host Factories** - Automated host enrollment with tokens
+- **Audit Logging** - RFC5424 syslog format matching Ruby Conjur
 
-Authn, though it doesn't verify your api key it allows you to assume the user you pass in.
-Like Conjur the account needs an associated tokenSigningPrivateKey in the slosilo keystore. 
-The token is used both to sign new access tokens, and to verify access tokens as part of authz.
-Also supports base64 encoding of the token.
-```shell
-curl -X POST \
-  -H 'Accept-Encoding: base64' \
-  -v \
-  "http://localhost:8000/authn/myConjurAccount/Dave@BotApp/authenticate"
+### API Endpoints
+
+| Category | Endpoints |
+|----------|-----------|
+| **Authentication** | Login, authenticate, rotate API key, update password |
+| **Policies** | Load (POST/PUT/PATCH), get versions, dry-run validation |
+| **Secrets** | Get, set, batch fetch, batch update, versioning |
+| **Resources** | List, show, permission check, permitted roles, annotations CRUD |
+| **Roles** | Show, members, memberships, add/remove members |
+| **Host Factory** | Create/revoke tokens, create hosts |
+| **Public Keys** | Fetch SSH public keys for users/hosts |
+
+### Slosilo Crypto
+Full Go port of [Slosilo](https://github.com/cyberark/slosilo):
+- AES-256-GCM symmetric encryption
+- RSA-PSS signing for JWT tokens
+- Compatible with Ruby Conjur's encrypted data
+
+## Quick Start
+
+### Using Docker (Recommended)
+
+```bash
+cd dev
+cp .env.example .env
+./cli setup      # Generate data key and build containers
+./cli start      # Start all services
+./cli demo       # Run happy path demo
 ```
 
-Secret writing + secret retrieval + authn + authz. For authn, as with Conjur in Ruby, tokens are verified against the token signing keys (from the slosilo keystore) based on the key id + fingerprint. From authn, we get the identity and use the stored procedure (`is_role_allowed_to`) to check for permissions before
-serving secrets to authenticated users. The data key is used to decrypt the secrets from the db.
-```shell
-token=...
-curl \
-  -H 'Authorization: Token token="'$token'"' \
-  -v \
-  "http://localhost:8000/secrets/myConjurAccount/variable/BotApp%2FsecretVar"
-```
+### Manual Build
 
-## Run
-
-Build and run
-
-```shell
+```bash
 go build -o conjurctl ./cmd/conjurctl
 
-DATABASE_URL="postgres://postgres@localhost/postgres" \
-CONJUR_DATA_KEY="2AP/N4ajPY3rsjpaIagjjA+JHjDbIw+hI+uI32jnrP4=" \
- ./conjurctl server
+DATABASE_URL="postgres://conjur:conjur@localhost:5432/conjur?sslmode=disable" \
+CONJUR_DATA_KEY="$(openssl rand -base64 32)" \
+./conjurctl server
+```
+
+## CLI Commands
+
+```bash
+conjurctl server                    # Start HTTP server (auto-migrates)
+conjurctl server --no-migrate       # Start without migrations
+conjurctl account create <name>     # Create account (generates admin API key)
+conjurctl db migrate                # Run database migrations
+conjurctl db status                 # Show migration status
+conjurctl policy load <acct> <file> # Load policy from file
+conjurctl data-key generate         # Generate encryption key
 ```
 
 ## Development
 
-A great way to develop this project is to run `cyberark/conjur-quickstart`.
-It will bootstrap that database using Conjur in Ruby. This project is meant to be 
-interoperable with the Conjur in Ruby.
+See [dev/README.md](dev/README.md) for the full development environment setup.
 
-Replace the database service in the `docker-compose.yml` with the following:
-
-```yaml
-  database:
-    image: postgres:10.15
-    container_name: postgres_database
-    environment:
-      POSTGRES_HOST_AUTH_METHOD: trust
-    ports:
-      - 5432:5432
-  pgadmin:
-#    https://www.pgadmin.org/docs/pgadmin4/latest/container_deployment.html
-    image: dpage/pgadmin4
-    environment:
-      PGADMIN_DEFAULT_EMAIL: user@domain.com
-      PGADMIN_DEFAULT_PASSWORD: SuperSecret
-    ports:
-      - 80:80
+```bash
+cd dev
+./cli start          # Start services
+./cli logs app       # View logs
+./cli test           # Run tests
+./cli test-interop   # Run Go-Ruby interoperability tests
 ```
 
-Visit `http://localhost:80` and use the pgadmin UI to navigate the Conjur database.
-This really helps while tinkering. You can see all the tables and explore the Conjur database with such ease. 
+## Architecture
 
-## Cool ideas!
+```
+conjur-in-go/
+├── cmd/conjurctl/     # CLI application
+├── pkg/
+│   ├── audit/         # RFC5424 syslog logging
+│   ├── model/         # Database models
+│   ├── policy/        # YAML parser & loader
+│   ├── server/
+│   │   ├── endpoints/ # HTTP handlers
+│   │   └── middleware/# JWT auth
+│   └── slosilo/       # Crypto (encryption, signing)
+├── db/migrations/     # SQL migrations (40+)
+└── dev/               # Docker dev environment
+```
 
-1. OpenTelemetry, get some metrics and traces going.
-2. This could be used to create a lightweight "Conjur" that has a, say, in-memory backing 
-   store for extremely fast reads. In this case the server needs to just do authn, authz and secrets fetching. Who knows the kinds of performance you could squeeze.
-3. Refactor + unit tests should be fun.
+## Interoperability
+
+Both Go and Ruby Conjur servers can:
+- Share the same PostgreSQL database
+- Read each other's encrypted secrets
+- Authenticate users created by either server
+- Load and enforce the same policies
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for detailed feature status and future plans.
+
+## License
+
+Apache 2.0
 

@@ -1,0 +1,109 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile
+    volumes:
+      - ..:/app
+      - go-modules:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    ports:
+      - "8000:8000"
+    environment:
+      - CONJUR_DATA_KEY=${CONJUR_DATA_KEY:-}
+      - DATABASE_URL=postgres://conjur:conjur@postgres:5432/conjur?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /app
+    command: reflex -c /app/dev/reflex.conf
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: conjur
+      POSTGRES_PASSWORD: conjur
+      POSTGRES_DB: conjur
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U conjur -d conjur"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./pgadmin-servers.json:/pgadmin4/servers.json:ro
+      - ./pgpass:/pgadmin4/pgpass:ro
+    depends_on:
+      - postgres
+
+  # Conjur CLI for testing compatibility with conjur-in-go
+  conjur-cli:
+    image: cyberark/conjur-cli:8
+    user: root
+    volumes:
+      - conjur-cli-data:/root
+    environment:
+      - CONJUR_APPLIANCE_URL=http://app:8000
+      - HOME=/root
+    depends_on:
+      - app
+    entrypoint: ["sleep", "infinity"]
+    profiles:
+      - cli
+
+  # Ruby Conjur OSS for interoperability testing
+  # Runs on port 3000, shares the same database as conjur-in-go
+  # Go migrations sync to sequel_schema_migrations table for Ruby compatibility
+  conjur-ruby:
+    image: cyberark/conjur:latest
+    environment:
+      - DATABASE_URL=postgres://conjur:conjur@postgres:5432/conjur
+      - CONJUR_DATA_KEY=${CONJUR_DATA_KEY:-}
+      - CONJUR_AUTHENTICATORS=authn
+      - RAILS_ENV=production
+      - CONJUR_LOG_LEVEL=debug
+    ports:
+      - "3000:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["server", "--no-migrate"]
+    profiles:
+      - ruby
+
+  # CLI configured for Ruby Conjur (for comparison testing)
+  conjur-cli-ruby:
+    image: cyberark/conjur-cli:8
+    user: root
+    volumes:
+      - conjur-cli-ruby-data:/root
+    environment:
+      - CONJUR_APPLIANCE_URL=http://conjur-ruby:80
+      - HOME=/root
+    depends_on:
+      - conjur-ruby
+    entrypoint: ["sleep", "infinity"]
+    profiles:
+      - ruby
+
+volumes:
+  postgres-data:
+  pgadmin-data:
+  go-modules:
+  go-build-cache:
+  conjur-cli-data:
+  conjur-cli-ruby-data:

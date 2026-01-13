@@ -1,0 +1,2 @@
+-- No-op: Cannot restore deleted API keys
+-- Matches: conjur/db/migrate/20211114091827_remove_unused_api_keys.rb

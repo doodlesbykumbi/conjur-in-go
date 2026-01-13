@@ -1,0 +1,2 @@
+-- No down migration - this updates triggers to statement-level
+-- Matches: conjur/db/migrate/202403221318214_policy_log_trigger_each_statement.rb

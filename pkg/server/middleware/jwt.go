@@ -1,4 +1,4 @@
-package endpoints
+package middleware
 
 import (
 	"context"
@@ -13,11 +13,18 @@ import (
 
 var tokenRegex = regexp.MustCompile(`^Token token="(.*)"`)
 
+// JWTAuthenticator is middleware that validates JWT tokens
 type JWTAuthenticator struct {
-	keystore *store.KeyStore
+	Keystore *store.KeyStore
 }
 
-func roleId(account string, login string) string {
+// NewJWTAuthenticator creates a new JWT authenticator middleware
+func NewJWTAuthenticator(keystore *store.KeyStore) *JWTAuthenticator {
+	return &JWTAuthenticator{Keystore: keystore}
+}
+
+// RoleID constructs a role ID from account and login
+func RoleID(account string, login string) string {
 	tokens := strings.Split(login, "/")
 	if len(tokens) == 1 {
 		tokens = []string{"user", login}
@@ -31,7 +38,8 @@ func roleId(account string, login string) string {
 	)
 }
 
-func (j JWTAuthenticator) Instrument(next http.Handler) http.Handler {
+// Middleware returns an HTTP middleware that validates JWT tokens
+func (j *JWTAuthenticator) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 
@@ -78,7 +86,7 @@ func (j JWTAuthenticator) Instrument(next http.Handler) http.Handler {
 				".",
 			)
 
-			key, err := j.keystore.ByFingerprint(kid)
+			key, err := j.Keystore.ByFingerprint(kid)
 			if err != nil {
 				return "", false
 			}
@@ -96,7 +104,7 @@ func (j JWTAuthenticator) Instrument(next http.Handler) http.Handler {
 			return
 		}
 
-		roleId := roleId(account, authToken.Sub())
+		roleId := RoleID(account, authToken.Sub())
 		ctx := r.Context()
 		ctx = context.WithValue(ctx, "roleId", roleId)
 		r = r.WithContext(ctx)

@@ -9,11 +9,13 @@ import (
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 
+	"conjur-in-go/pkg/slosilo"
 	"conjur-in-go/pkg/slosilo/store"
 )
 
 type Server struct {
 	Keystore *store.KeyStore
+	Cipher   slosilo.SymmetricCipher
 	Router   *mux.Router
 	DB       *gorm.DB
 	srv      *http.Server
@@ -21,6 +23,7 @@ type Server struct {
 
 func NewServer(
 	keystore *store.KeyStore,
+	cipher slosilo.SymmetricCipher,
 	db *gorm.DB,
 	host string,
 	port string,
@@ -37,6 +40,7 @@ func NewServer(
 
 	return &Server{
 		Keystore: keystore,
+		Cipher:   cipher,
 		Router:   router,
 		DB:       db,
 		srv:      srv,

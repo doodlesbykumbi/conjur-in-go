@@ -1,8 +1,11 @@
 package model
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -10,12 +13,25 @@ import (
 )
 
 type Credential struct {
-	RoleId string
-	ApiKey sql.RawBytes
+	RoleId    string
+	ApiKey    sql.RawBytes
+	UpdatedAt time.Time
 }
 
 func (c Credential) TableName() string {
 	return "credentials"
+}
+
+// GenerateAPIKey creates a new random API key
+func GenerateAPIKey() ([]byte, error) {
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	if err != nil {
+		return nil, err
+	}
+	// Return URL-safe base64 encoded key
+	encoded := base64.URLEncoding.EncodeToString(key)
+	return []byte(encoded), nil
 }
 
 func (c *Credential) AfterFind(tx *gorm.DB) (err error) {

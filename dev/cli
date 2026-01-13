@@ -1,0 +1,379 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
+log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
+
+usage() {
+    cat <<EOF
+Conjur-in-Go Development CLI
+
+Usage: ./cli <command> [options]
+
+Commands:
+  start           Start all services (or specific service)
+  stop            Stop all services
+  restart         Restart all services (or specific service)
+  destroy         Stop and remove all containers, networks, and volumes
+  logs            Follow logs (all services or specific service)
+  exec            Execute a command in the app container
+  shell           Open a shell in the app container
+  psql            Open psql shell to the database
+  test            Run Go tests
+  build           Rebuild the app container
+  status          Show status of all services
+  generate-key    Generate a new CONJUR_DATA_KEY
+  setup           Initial setup (copy .env, generate key)
+  migrate         Run database migrations
+  migrate-down    Rollback database migrations
+  migrate-status  Show migration status
+  account-create  Create a new account
+  policy-load     Load a policy file
+  conjur-cli      Run Conjur CLI commands (starts CLI container if needed)
+  demo            Run the happy path demo
+  test-interop    Run interoperability tests (Go + Ruby)
+
+Examples:
+  ./cli start                    # Start all services
+  ./cli start postgres           # Start only postgres
+  ./cli logs app                 # Follow app logs
+  ./cli exec go build ./...      # Build the Go project
+  ./cli shell                    # Open bash in app container
+  ./cli psql                     # Connect to postgres
+  ./cli test ./pkg/...           # Run tests in pkg directory
+
+EOF
+}
+
+ensure_env() {
+    if [[ ! -f .env ]]; then
+        log_warn ".env file not found"
+        read -p "Create .env from .env.example? [Y/n] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+            cp .env.example .env
+            log_success "Created .env from .env.example"
+            log_warn "You need to set CONJUR_DATA_KEY in .env"
+            log_info "Run: ./cli generate-key"
+            exit 1
+        else
+            log_error "Cannot start without .env file"
+            exit 1
+        fi
+    fi
+
+    # Check if CONJUR_DATA_KEY is set
+    source .env
+    if [[ -z "${CONJUR_DATA_KEY:-}" ]]; then
+        log_error "CONJUR_DATA_KEY is not set in .env"
+        log_info "Run: ./cli generate-key"
+        exit 1
+    fi
+}
+
+cmd_start() {
+    ensure_env
+    local service="${1:-}"
+    if [[ -n "$service" ]]; then
+        log_info "Starting $service..."
+        docker compose up -d "$service"
+    else
+        log_info "Starting all services..."
+        docker compose up -d
+    fi
+    log_success "Services started"
+    cmd_status
+}
+
+cmd_stop() {
+    log_info "Stopping all services..."
+    docker compose stop
+    log_success "Services stopped"
+}
+
+cmd_restart() {
+    local service="${1:-}"
+    if [[ -n "$service" ]]; then
+        log_info "Restarting $service..."
+        docker compose restart "$service"
+    else
+        log_info "Restarting all services..."
+        docker compose restart
+    fi
+    log_success "Services restarted"
+}
+
+cmd_destroy() {
+    log_warn "This will remove all containers, networks, and volumes!"
+    read -p "Are you sure? [y/N] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        log_info "Destroying environment..."
+        docker compose down -v --remove-orphans
+        log_success "Environment destroyed"
+    else
+        log_info "Cancelled"
+    fi
+}
+
+cmd_logs() {
+    local service="${1:-}"
+    if [[ -n "$service" ]]; then
+        docker compose logs -f "$service"
+    else
+        docker compose logs -f
+    fi
+}
+
+cmd_exec() {
+    if [[ $# -eq 0 ]]; then
+        log_error "No command specified"
+        echo "Usage: ./cli exec <command>"
+        exit 1
+    fi
+    docker compose exec app "$@"
+}
+
+cmd_shell() {
+    log_info "Opening shell in app container..."
+    docker compose exec app sh
+}
+
+cmd_psql() {
+    log_info "Connecting to PostgreSQL..."
+    docker compose exec postgres psql -U conjur -d conjur
+}
+
+cmd_test() {
+    local args="${*:-./...}"
+    log_info "Running tests: go test $args"
+    docker compose exec app go test $args
+}
+
+cmd_build() {
+    log_info "Rebuilding app container..."
+    docker compose build app
+    log_success "Build complete"
+}
+
+cmd_status() {
+    echo ""
+    docker compose ps
+    echo ""
+    echo "Endpoints:"
+    echo "  App:     http://localhost:8000"
+    echo "  pgAdmin: http://localhost:5050"
+    echo ""
+}
+
+cmd_generate_key() {
+    local key
+    key=$(openssl rand -base64 32)
+    echo ""
+    log_success "Generated CONJUR_DATA_KEY:"
+    echo ""
+    echo "  $key"
+    echo ""
+    
+    if [[ -f .env ]]; then
+        read -p "Update .env with this key? [Y/n] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+            if grep -q "^CONJUR_DATA_KEY=" .env; then
+                sed -i.bak "s|^CONJUR_DATA_KEY=.*|CONJUR_DATA_KEY=$key|" .env && rm -f .env.bak
+            else
+                echo "CONJUR_DATA_KEY=$key" >> .env
+            fi
+            log_success "Updated .env"
+        fi
+    else
+        log_info "Add this to your .env file:"
+        echo "  CONJUR_DATA_KEY=$key"
+    fi
+}
+
+cmd_setup() {
+    log_info "Setting up development environment..."
+    
+    # Create .env if needed
+    if [[ ! -f .env ]]; then
+        cp .env.example .env
+        log_success "Created .env from .env.example"
+    else
+        log_info ".env already exists"
+    fi
+    
+    # Generate key if not set
+    source .env
+    if [[ -z "${CONJUR_DATA_KEY:-}" ]]; then
+        cmd_generate_key
+    else
+        log_info "CONJUR_DATA_KEY already set"
+    fi
+    
+    # Build containers
+    log_info "Building containers..."
+    docker compose build
+    
+    log_success "Setup complete! Run './cli start' to start the environment."
+}
+
+cmd_migrate() {
+    log_info "Running database migrations..."
+    docker compose exec -e DATABASE_URL="postgres://conjur:conjur@postgres:5432/conjur?sslmode=disable" \
+        -e MIGRATIONS_PATH="/app/db/migrations" \
+        app go run ./cmd/conjurctl db migrate
+    log_success "Migrations complete"
+}
+
+cmd_migrate_down() {
+    local steps="${1:-1}"
+    log_warn "Rolling back $steps migration(s)..."
+    docker compose exec -e DATABASE_URL="postgres://conjur:conjur@postgres:5432/conjur?sslmode=disable" \
+        -e MIGRATIONS_PATH="/app/db/migrations" \
+        app go run ./cmd/conjurctl db down "$steps"
+    log_success "Rollback complete"
+}
+
+cmd_migrate_status() {
+    log_info "Migration status:"
+    docker compose exec -e DATABASE_URL="postgres://conjur:conjur@postgres:5432/conjur?sslmode=disable" \
+        -e MIGRATIONS_PATH="/app/db/migrations" \
+        app go run ./cmd/conjurctl db status
+}
+
+cmd_account_create() {
+    local name="${1:-default}"
+    log_info "Creating account '$name'..."
+    docker compose exec -e DATABASE_URL="postgres://conjur:conjur@postgres:5432/conjur?sslmode=disable" \
+        -e CONJUR_DATA_KEY="${CONJUR_DATA_KEY:-}" \
+        app go run ./cmd/conjurctl account create "$name"
+}
+
+cmd_policy_load() {
+    local account="${1:-}"
+    local file="${2:-}"
+    
+    if [[ -z "$account" ]] || [[ -z "$file" ]]; then
+        log_error "Usage: ./cli policy-load <account> <file>"
+        exit 1
+    fi
+    
+    log_info "Loading policy for account '$account' from '$file'..."
+    docker compose exec -e DATABASE_URL="postgres://conjur:conjur@postgres:5432/conjur?sslmode=disable" \
+        app go run ./cmd/conjurctl policy load "$account" "$file"
+}
+
+cmd_conjur_cli() {
+    # Start CLI container if not running
+    if ! docker compose --profile cli ps --status running | grep -q conjur-cli; then
+        log_info "Starting Conjur CLI container..."
+        docker compose --profile cli up -d conjur-cli
+    fi
+    
+    if [[ $# -eq 0 ]]; then
+        # Interactive shell
+        log_info "Opening Conjur CLI shell..."
+        docker compose exec conjur-cli /bin/sh
+    else
+        # Run command
+        docker compose exec conjur-cli conjur "$@"
+    fi
+}
+
+# Main command dispatcher
+case "${1:-}" in
+    start)
+        shift
+        cmd_start "$@"
+        ;;
+    stop)
+        cmd_stop
+        ;;
+    restart)
+        shift
+        cmd_restart "$@"
+        ;;
+    destroy)
+        cmd_destroy
+        ;;
+    logs)
+        shift
+        cmd_logs "$@"
+        ;;
+    exec)
+        shift
+        cmd_exec "$@"
+        ;;
+    shell|sh)
+        cmd_shell
+        ;;
+    psql|db)
+        cmd_psql
+        ;;
+    test)
+        shift
+        cmd_test "$@"
+        ;;
+    build)
+        cmd_build
+        ;;
+    status|ps)
+        cmd_status
+        ;;
+    generate-key|genkey)
+        cmd_generate_key
+        ;;
+    setup|init)
+        cmd_setup
+        ;;
+    migrate)
+        shift
+        cmd_migrate "$@"
+        ;;
+    migrate-down)
+        shift
+        cmd_migrate_down "$@"
+        ;;
+    migrate-status)
+        cmd_migrate_status
+        ;;
+    account-create)
+        shift
+        cmd_account_create "$@"
+        ;;
+    policy-load)
+        shift
+        cmd_policy_load "$@"
+        ;;
+    conjur-cli)
+        shift
+        cmd_conjur_cli "$@"
+        ;;
+    demo|happy-path)
+        "$SCRIPT_DIR/scripts/demo-happy-path.sh"
+        ;;
+    test-interop|interop)
+        "$SCRIPT_DIR/scripts/test-interop.sh"
+        ;;
+    help|--help|-h|"")
+        usage
+        ;;
+    *)
+        log_error "Unknown command: $1"
+        usage
+        exit 1
+        ;;
+esac

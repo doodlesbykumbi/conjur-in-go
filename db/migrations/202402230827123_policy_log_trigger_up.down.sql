@@ -1,0 +1,3 @@
+-- No down migration - this is an update to existing functions
+-- Matches: conjur/db/migrate/202402230827123_policy_log_trigger_up.rb
+-- The previous version of these functions is in 000028_policy_log_trigger_bypass

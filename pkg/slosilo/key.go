@@ -25,6 +25,21 @@ func NewKey(pkeyDer []byte) (*Key, error) {
 	return &Key{privateKey: pkey}, nil
 }
 
+// GenerateKey generates a new 2048-bit RSA key for token signing
+func GenerateKey() (*Key, error) {
+	pkey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Key{privateKey: pkey}, nil
+}
+
+// Serialize returns the DER-encoded private key
+func (k Key) Serialize() ([]byte, error) {
+	return x509.MarshalPKCS1PrivateKey(k.privateKey), nil
+}
+
 func sha256Digest(value []byte) []byte {
 	hash := sha256.New()
 	hash.Write(value)

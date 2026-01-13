@@ -1,0 +1,2 @@
+-- No-op: Cannot restore deleted policy versions
+-- Matches: conjur/db/migrate/20220104115357_policy_retention.rb

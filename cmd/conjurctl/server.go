@@ -20,7 +20,7 @@ import (
 // NOTES
 // tokenSigningPrivateKey is stored in slosilo keystore
 
-const defaultBindAddress = "127.0.0.1"
+const defaultBindAddress = "0.0.0.0"
 const defaultPort = "8000"
 
 // serverCmd represents the server command
@@ -29,8 +29,19 @@ var serverCmd = &cobra.Command{
 	Short: "Run the Conjur application server",
 	Long: `Run the Conjur application server 
 
-To run the server requires the environment variables CONJUR_DATA_KEY and DATABASE_URL.`,
+To run the server requires the environment variables CONJUR_DATA_KEY and DATABASE_URL.
+
+By default, database migrations are run on startup. Use --no-migrate to skip.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Run migrations unless --no-migrate is set
+		noMigrate, _ := cmd.Flags().GetBool("no-migrate")
+		if !noMigrate {
+			log.Println("Running database migrations...")
+			if err := runMigrations(); err != nil {
+				log.Printf("Warning: Migration failed: %v\n", err)
+				// Don't exit - migrations might already be applied
+			}
+		}
 		dataKeyB64, ok := os.LookupEnv("CONJUR_DATA_KEY")
 		if !ok {
 			fmt.Println("No CONJUR_DATA_KEY")
@@ -69,10 +80,18 @@ To run the server requires the environment variables CONJUR_DATA_KEY and DATABAS
 
 		host, _ := cmd.Flags().GetString("bind-address")
 		port, _ := cmd.Flags().GetString("port")
-		s := server.NewServer(keystore, db, host, port)
+		s := server.NewServer(keystore, cipher, db, host, port)
 
+		endpoints.RegisterStatusEndpoints(s)
 		endpoints.RegisterSecretsEndpoints(s)
 		endpoints.RegisterAuthenticateEndpoint(s)
+		endpoints.RegisterPoliciesEndpoints(s)
+		endpoints.RegisterWhoamiEndpoint(s)
+		endpoints.RegisterHostFactoryEndpoints(s)
+		endpoints.RegisterAnnotationsEndpoints(s)
+		endpoints.RegisterResourcesEndpoints(s)
+		endpoints.RegisterRolesEndpoints(s)
+		endpoints.RegisterPublicKeysEndpoints(s)
 
 		log.Printf("Running server at http://%s:%s...\n", host, port)
 		log.Fatal(s.Start())
@@ -92,4 +111,5 @@ func init() {
 	// is called directly, e.g.:
 	serverCmd.Flags().StringP("port", "p", defaultPort, "server listen port")
 	serverCmd.Flags().StringP("bind-address", "b", defaultBindAddress, "server bind address")
+	serverCmd.Flags().Bool("no-migrate", false, "skip running database migrations on start")
 }
