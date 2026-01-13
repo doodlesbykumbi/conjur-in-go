@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -142,7 +143,54 @@ func escapeSDValue(value string) string {
 // Default logger instance
 var DefaultLogger = NewLogger()
 
-// Log writes an event to the default logger
+// Default store for database persistence (nil if AUDIT_DATABASE_URL not set)
+var DefaultStore *Store
+
+// Audit enabled state - defaults to true (enterprise feature)
+// Can be disabled via CONJUR_AUDIT_ENABLED=false to mimic OSS behavior
+var (
+	auditEnabled     = true
+	auditEnabledOnce sync.Once
+	storeInitOnce    sync.Once
+)
+
+// IsEnabled returns whether audit logging is enabled
+func IsEnabled() bool {
+	auditEnabledOnce.Do(func() {
+		if env := os.Getenv("CONJUR_AUDIT_ENABLED"); env != "" {
+			auditEnabled = env != "false" && env != "0" && env != "no"
+		}
+	})
+	return auditEnabled
+}
+
+// SetEnabled allows programmatic control of audit logging
+// Note: This should be called before any Log calls for consistent behavior
+func SetEnabled(enabled bool) {
+	auditEnabled = enabled
+}
+
+// Log writes an event to the default logger and store (if audit is enabled)
 func Log(event Event) {
+	if !IsEnabled() {
+		return
+	}
 	DefaultLogger.Log(event)
+
+	// Initialize store on first use
+	storeInitOnce.Do(func() {
+		var err error
+		DefaultStore, err = NewStore()
+		if err != nil {
+			// Log error but don't fail - audit DB is optional
+			fmt.Fprintf(os.Stderr, "audit: failed to connect to audit database: %v\n", err)
+		}
+	})
+
+	// Persist to database if store is available
+	if DefaultStore != nil {
+		if err := DefaultStore.Save(event); err != nil {
+			fmt.Fprintf(os.Stderr, "audit: failed to save event: %v\n", err)
+		}
+	}
 }

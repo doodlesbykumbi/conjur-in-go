@@ -1,10 +1,11 @@
 module conjur-in-go
 
-go 1.22
+go 1.22.0
 
 toolchain go1.24.3
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/dmarkham/enumer v1.6.1
 	github.com/golang-migrate/migrate/v4 v4.17.0
 	github.com/gorilla/handlers v1.5.1
