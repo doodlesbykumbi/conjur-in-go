@@ -11,11 +11,11 @@ import (
 var dataKeyCmd = &cobra.Command{
 	Use:   "data-key",
 	Short: "Manage the data encryption key",
-	Long: `Manage the data encryption key`,
+	Long:  `Manage the data encryption key`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("error: Command 'data-key' requires a subcommand generate")
 		fmt.Println()
-		cmd.Help()
+		_ = cmd.Help()
 		os.Exit(1)
 	},
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -19,6 +20,7 @@ type Server struct {
 	Router   *mux.Router
 	DB       *gorm.DB
 	srv      *http.Server
+	listener net.Listener
 }
 
 func NewServer(
@@ -47,6 +49,21 @@ func NewServer(
 	}
 }
 
-func (s Server) Start() error {
+func (s *Server) Start() error {
 	return s.srv.ListenAndServe()
+}
+
+// StartWithListener starts the server with a pre-created listener.
+// This is useful for tests where you need to know the actual port.
+func (s *Server) StartWithListener(ln net.Listener) error {
+	s.listener = ln
+	return s.srv.Serve(ln)
+}
+
+// Addr returns the server's address. Only valid after StartWithListener is called.
+func (s *Server) Addr() string {
+	if s.listener != nil {
+		return s.listener.Addr().String()
+	}
+	return s.srv.Addr
 }

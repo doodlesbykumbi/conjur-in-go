@@ -1,0 +1,23 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - -ST1000  # package comment
+        - -ST1003  # naming convention (Id vs ID, etc)
+        - -ST1005  # error strings should not be capitalized
+        - -ST1006  # receiver name
+        - -ST1012  # error var naming
+        - -ST1020  # comment on exported function
+        - -ST1022  # comment on exported var
+        - -SA1029  # context key type
+        - -SA5011  # possible nil pointer (false positive in test)
+        - -S1021   # merge variable declaration
+        - -S1016   # should convert type

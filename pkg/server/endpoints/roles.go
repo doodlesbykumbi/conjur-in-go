@@ -89,7 +89,7 @@ func handleShowRole(db *gorm.DB) http.HandlerFunc {
 		role := fetchRole(db, roleId)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(role)
+		_ = json.NewEncoder(w).Encode(role)
 	}
 }
 
@@ -112,14 +112,14 @@ func handleRoleMembers(db *gorm.DB, w http.ResponseWriter, r *http.Request, role
 	if r.URL.Query().Get("count") != "" {
 		count := countRoleMembers(db, roleId, search, kind)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]int{"count": count})
+		_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
 		return
 	}
 
 	members := fetchRoleMembers(db, roleId, search, kind, limit, offset)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(members)
+	_ = json.NewEncoder(w).Encode(members)
 }
 
 // handleRoleMemberships returns the direct memberships of a role (what roles is this role a member of)
@@ -128,14 +128,14 @@ func handleRoleMemberships(db *gorm.DB, w http.ResponseWriter, r *http.Request, 
 	if r.URL.Query().Get("count") != "" {
 		count := countRoleMemberships(db, roleId)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]int{"count": count})
+		_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
 		return
 	}
 
 	memberships := fetchRoleMemberships(db, roleId)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(memberships)
+	_ = json.NewEncoder(w).Encode(memberships)
 }
 
 // handleAllMemberships returns all memberships recursively
@@ -144,7 +144,7 @@ func handleAllMemberships(db *gorm.DB, w http.ResponseWriter, r *http.Request, r
 	if _, hasCount := r.URL.Query()["count"]; hasCount {
 		count := countAllMemberships(db, roleId)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]int{"count": count})
+		_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
 		return
 	}
 
@@ -161,7 +161,7 @@ func handleAllMemberships(db *gorm.DB, w http.ResponseWriter, r *http.Request, r
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(roleIds)
+	_ = json.NewEncoder(w).Encode(roleIds)
 }
 
 func fetchRole(db *gorm.DB, roleId string) RoleResponse {

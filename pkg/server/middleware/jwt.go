@@ -45,7 +45,7 @@ func (j *JWTAuthenticator) Middleware(next http.Handler) http.Handler {
 
 		if len(authHeader) == 0 {
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte("Authorization missing"))
+			_, _ = w.Write([]byte("Authorization missing"))
 			return
 		}
 
@@ -53,27 +53,27 @@ func (j *JWTAuthenticator) Middleware(next http.Handler) http.Handler {
 
 		if len(tokenMatches) != 2 {
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte("Malformed authorization header"))
+			_, _ = w.Write([]byte("Malformed authorization header"))
 			return
 		}
 
 		tokenStr, err := base64.URLEncoding.DecodeString(tokenMatches[1])
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte("Malformed authorization token"))
+			_, _ = w.Write([]byte("Malformed authorization token"))
 			return
 		}
 
 		authToken, err := slosilo.NewParsedToken(tokenStr)
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte("Malformed authorization token"))
+			_, _ = w.Write([]byte("Malformed authorization token"))
 			return
 		}
 
 		if authToken.Expired() {
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte("Token expired"))
+			_, _ = w.Write([]byte("Token expired"))
 			return
 		}
 
@@ -100,7 +100,7 @@ func (j *JWTAuthenticator) Middleware(next http.Handler) http.Handler {
 
 		if !verified {
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte("Invalid signature"))
+			_, _ = w.Write([]byte("Invalid signature"))
 			return
 		}
 

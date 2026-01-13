@@ -90,7 +90,7 @@ func handleListResources(db *gorm.DB) http.HandlerFunc {
 		if r.URL.Query().Get("count") == "true" {
 			count := countResources(db, account, kind, roleId, search)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]int{"count": count})
+			_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
 			return
 		}
 
@@ -98,7 +98,7 @@ func handleListResources(db *gorm.DB) http.HandlerFunc {
 		resources := listResources(db, account, kind, roleId, search, limit, offset)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resources)
+		_ = json.NewEncoder(w).Encode(resources)
 	}
 }
 
@@ -154,7 +154,7 @@ func handleShowResource(db *gorm.DB) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resource)
+		_ = json.NewEncoder(w).Encode(resource)
 	}
 }
 
@@ -180,7 +180,7 @@ func handlePermittedRoles(db *gorm.DB, w http.ResponseWriter, r *http.Request, r
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(roleIds)
+	_ = json.NewEncoder(w).Encode(roleIds)
 }
 
 // handlePermissionCheck implements the permission check endpoint

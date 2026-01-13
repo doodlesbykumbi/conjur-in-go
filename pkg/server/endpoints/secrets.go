@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -54,7 +54,7 @@ func RegisterSecretsEndpoints(server *server.Server) {
 
 	// GET /secrets?variable_ids=... - Batch fetch secrets
 	secretsRouter.HandleFunc(
-		"/",
+		"",
 		func(writer http.ResponseWriter, request *http.Request) {
 			variableIdsParam := request.URL.Query().Get("variable_ids")
 			if variableIdsParam == "" {
@@ -112,7 +112,7 @@ func RegisterSecretsEndpoints(server *server.Server) {
 				writer.Header().Set("Content-Encoding", "base64")
 			}
 			writer.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(writer).Encode(results)
+			_ = json.NewEncoder(writer).Encode(results)
 		},
 	).Methods("GET").Queries("variable_ids", "{variable_ids}")
 
@@ -189,15 +189,15 @@ func RegisterSecretsEndpoints(server *server.Server) {
 				Version:    secretVersion,
 				Success:    true,
 			})
-			writer.Write(secret.Value)
+			_, _ = writer.Write(secret.Value)
 		},
 	).Methods("GET")
 
 	secretsRouter.HandleFunc(
 		"/{account}/{kind}/{identifier:.+}", // For 'identifier' we grab the rest of the URL including slashes
 		func(writer http.ResponseWriter, request *http.Request) {
-			newSecretValue, err := ioutil.ReadAll(request.Body)
-			defer request.Body.Close()
+			newSecretValue, err := io.ReadAll(request.Body)
+			defer func() { _ = request.Body.Close() }()
 			if err != nil {
 				http.Error(writer, err.Error(), http.StatusBadRequest)
 				return
@@ -304,7 +304,7 @@ func handleBatchUpdateSecrets(db *gorm.DB) http.HandlerFunc {
 			respondWithError(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
 			return
 		}
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 
 		if len(req.Secrets) == 0 {
 			respondWithError(w, http.StatusBadRequest, map[string]string{"error": "No secrets provided"})
@@ -371,6 +371,6 @@ func handleBatchUpdateSecrets(db *gorm.DB) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(statusCode)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}
 }

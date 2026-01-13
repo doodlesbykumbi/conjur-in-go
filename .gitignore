@@ -1,5 +1,5 @@
-# Binaries
-conjurctl
+# Binaries (only at root level)
+/conjurctl
 *.exe
 *.exe~
 *.dll

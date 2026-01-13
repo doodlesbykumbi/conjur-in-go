@@ -19,6 +19,16 @@ type Group struct {
 	Owner       ResourceRef            `yaml:"owner,omitempty"`
 }
 
+// UnmarshalYAML for Group handles both scalar (just ID) and mapping forms
+func (g *Group) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		g.Id = value.Value
+		return nil
+	}
+	type groupAlias Group
+	return value.Decode((*groupAlias)(g))
+}
+
 type Annotations map[string]interface{}
 
 type Variable struct {
@@ -28,11 +38,31 @@ type Variable struct {
 	Kind        string                 `yaml:"kind,omitempty"`
 }
 
+// UnmarshalYAML for Variable handles both scalar (just ID) and mapping forms
+func (v *Variable) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		v.Id = value.Value
+		return nil
+	}
+	type variableAlias Variable
+	return value.Decode((*variableAlias)(v))
+}
+
 type User struct {
 	Resource    `yaml:"-"`
 	Id          string                 `yaml:"id"`
 	Owner       ResourceRef            `yaml:"owner,omitempty"`
 	Annotations map[string]interface{} `yaml:"annotations,omitempty"`
+}
+
+// UnmarshalYAML for User handles both scalar (just ID) and mapping forms
+func (u *User) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		u.Id = value.Value
+		return nil
+	}
+	type userAlias User
+	return value.Decode((*userAlias)(u))
 }
 
 type Policy struct {

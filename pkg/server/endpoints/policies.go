@@ -19,6 +19,7 @@ import (
 type PolicyLoadResponse struct {
 	CreatedRoles map[string]policy.RoleCredentials `json:"created_roles"`
 	Version      int                               `json:"version"`
+	DryRun       bool                              `json:"dry_run,omitempty"`
 }
 
 // PolicyVersionResponse represents a policy version in the API response
@@ -88,7 +89,7 @@ func handleGetPolicy(db *gorm.DB) http.HandlerFunc {
 
 			// Return policy text
 			w.Header().Set("Content-Type", "application/x-yaml")
-			w.Write([]byte(pv.PolicyText))
+			_, _ = w.Write([]byte(pv.PolicyText))
 			return
 		}
 
@@ -122,7 +123,7 @@ func handleGetPolicy(db *gorm.DB) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(versions)
+		_ = json.NewEncoder(w).Encode(versions)
 	}
 }
 
@@ -138,7 +139,7 @@ func handlePolicyLoad(s *server.Server) http.HandlerFunc {
 			http.Error(w, "Failed to read request body", http.StatusBadRequest)
 			return
 		}
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 
 		if len(body) == 0 {
 			http.Error(w, "Policy body is required", http.StatusBadRequest)
@@ -186,10 +187,15 @@ func handlePolicyLoad(s *server.Server) http.HandlerFunc {
 		response := PolicyLoadResponse{
 			CreatedRoles: result.CreatedRoles,
 			Version:      result.Version,
+			DryRun:       dryRun,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(response)
+		if dryRun {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusCreated)
+		}
+		_ = json.NewEncoder(w).Encode(response)
 	}
 }

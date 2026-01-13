@@ -57,7 +57,7 @@ func handleListAnnotations(db *gorm.DB) http.HandlerFunc {
 		annotations := getAnnotationsMap(db, resourceId)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(annotations)
+		_ = json.NewEncoder(w).Encode(annotations)
 	}
 }
 
@@ -89,7 +89,7 @@ func handleGetAnnotation(db *gorm.DB) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte(value))
+		_, _ = w.Write([]byte(value))
 	}
 }
 

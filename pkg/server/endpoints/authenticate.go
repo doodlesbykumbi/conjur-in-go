@@ -4,7 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -69,7 +69,7 @@ func RegisterAuthenticateEndpoint(server *server.Server) {
 
 			// Return the API key (same as password for API key auth)
 			writer.Header().Set("Content-Type", "text/plain")
-			writer.Write([]byte(password))
+			_, _ = writer.Write([]byte(password))
 		},
 	).Methods("GET")
 
@@ -160,7 +160,7 @@ func RegisterAuthenticateEndpoint(server *server.Server) {
 
 			// Return the new API key
 			writer.Header().Set("Content-Type", "text/plain")
-			writer.Write(newApiKey)
+			_, _ = writer.Write(newApiKey)
 		},
 	).Methods("PUT")
 
@@ -202,8 +202,8 @@ func RegisterAuthenticateEndpoint(server *server.Server) {
 			}
 
 			// Read new password from body
-			newPassword, err := ioutil.ReadAll(request.Body)
-			defer request.Body.Close()
+			newPassword, err := io.ReadAll(request.Body)
+			defer func() { _ = request.Body.Close() }()
 			if err != nil {
 				http.Error(writer, "Failed to read request body", http.StatusBadRequest)
 				return
@@ -239,8 +239,8 @@ func RegisterAuthenticateEndpoint(server *server.Server) {
 	router.HandleFunc(
 		"/authn/{account}/{login}/authenticate",
 		func(writer http.ResponseWriter, request *http.Request) {
-			requestApiKey, err := ioutil.ReadAll(request.Body)
-			defer request.Body.Close()
+			requestApiKey, err := io.ReadAll(request.Body)
+			defer func() { _ = request.Body.Close() }()
 			if err != nil {
 				http.Error(writer, err.Error(), http.StatusBadRequest)
 				return
@@ -282,7 +282,7 @@ func RegisterAuthenticateEndpoint(server *server.Server) {
 					Success:           false,
 					ErrorMessage:      "role not found",
 				})
-				http.Error(writer, err.Error(), http.StatusBadRequest)
+				writer.WriteHeader(http.StatusUnauthorized)
 				return
 			}
 
@@ -342,12 +342,16 @@ func RegisterAuthenticateEndpoint(server *server.Server) {
 			// Go uses UTF-8 as the standard encoding.
 			// TODO: confirm if these are altogether compatible, and there are no edge cases where a token signed by Ruby
 			// can't be verified by Go and vice-versa
-			newsignature, err := key.Sign(
+			newsignature, signErr := key.Sign(
 				[]byte(
 					stringToSign,
 				),
 				newsalt,
 			)
+			if signErr != nil {
+				http.Error(writer, fmt.Sprintf("Error signing token: %s", signErr.Error()), http.StatusInternalServerError)
+				return
+			}
 			newjwt := map[string]string{
 				"protected": base64.URLEncoding.EncodeToString([]byte(newheader)),
 				"payload":   base64.URLEncoding.EncodeToString([]byte(newclaims)),
@@ -358,12 +362,12 @@ func RegisterAuthenticateEndpoint(server *server.Server) {
 
 			if base64Encoding {
 				writer.Header().Add("Content-Encoding", "base64")
-				base64.NewEncoder(base64.StdEncoding.Strict(), writer).Write(newjwtJSON)
+				_, _ = base64.NewEncoder(base64.StdEncoding.Strict(), writer).Write(newjwtJSON)
 				return
 			}
 
 			writer.Header().Add("Content-Type", "application/json")
-			writer.Write(newjwtJSON)
+			_, _ = writer.Write(newjwtJSON)
 		},
 	).Methods("POST")
 }

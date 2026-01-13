@@ -17,7 +17,7 @@ func TestMockDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create mock db: %v", err)
 	}
-	defer mockDB.Close()
+	defer func() { _ = mockDB.Close() }()
 
 	// Test that mock was created successfully
 	if mockDB.DB == nil {
@@ -36,7 +36,7 @@ func TestMockCredentialQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create mock db: %v", err)
 	}
-	defer mockDB.Close()
+	defer func() { _ = mockDB.Close() }()
 
 	roleId := "myorg:user:admin"
 	apiKey := []byte("encrypted-api-key")
@@ -68,7 +68,7 @@ func TestMockCredentialNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create mock db: %v", err)
 	}
-	defer mockDB.Close()
+	defer func() { _ = mockDB.Close() }()
 
 	roleId := "myorg:user:nonexistent"
 	mockDB.ExpectCredentialNotFound(roleId)
@@ -95,7 +95,7 @@ func TestMockPermissionCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create mock db: %v", err)
 	}
-	defer mockDB.Close()
+	defer func() { _ = mockDB.Close() }()
 
 	tests := []struct {
 		name    string
@@ -111,7 +111,7 @@ func TestMockPermissionCheck(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create mock db: %v", err)
 			}
-			defer mockDB.Close()
+			defer func() { _ = mockDB.Close() }()
 
 			mockDB.ExpectPermissionCheck(tt.allowed)
 
@@ -138,7 +138,7 @@ func TestMockSecretQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create mock db: %v", err)
 	}
-	defer mockDB.Close()
+	defer func() { _ = mockDB.Close() }()
 
 	resourceId := "myorg:variable:db/password"
 	encryptedValue := []byte("encrypted-secret-value")
@@ -178,7 +178,7 @@ func TestMockSecretNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create mock db: %v", err)
 	}
-	defer mockDB.Close()
+	defer func() { _ = mockDB.Close() }()
 
 	mockDB.ExpectSecretNotFound()
 
@@ -242,7 +242,7 @@ func TestAuthenticateWithMock(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create mock db: %v", err)
 		}
-		defer mockDB.Close()
+		defer func() { _ = mockDB.Close() }()
 
 		roleId := "myorg:user:admin"
 		apiKey := "test-api-key"
@@ -292,7 +292,7 @@ func TestSecretsWithMock(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create mock db: %v", err)
 		}
-		defer mockDB.Close()
+		defer func() { _ = mockDB.Close() }()
 
 		resourceId := "myorg:variable:db/password"
 		secretValue := "super-secret-password"
@@ -336,7 +336,7 @@ func TestResourcePermissionWithMock(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create mock db: %v", err)
 		}
-		defer mockDB.Close()
+		defer func() { _ = mockDB.Close() }()
 
 		mockDB.ExpectPermissionCheck(true)
 
@@ -364,7 +364,7 @@ func TestResourcePermissionWithMock(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create mock db: %v", err)
 		}
-		defer mockDB.Close()
+		defer func() { _ = mockDB.Close() }()
 
 		mockDB.ExpectPermissionCheck(false)
 
@@ -394,7 +394,7 @@ func TestTransactionWithMock(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create sqlmock: %v", err)
 		}
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		mock.ExpectBegin()
 		mock.ExpectExec(`INSERT INTO`).WillReturnResult(sqlmock.NewResult(1, 1))
@@ -425,7 +425,7 @@ func TestTransactionWithMock(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create sqlmock: %v", err)
 		}
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		mock.ExpectBegin()
 		mock.ExpectExec(`INSERT INTO`).WillReturnError(sql.ErrConnDone)
@@ -465,7 +465,7 @@ func TestSigningKeyWithMock(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create mock db: %v", err)
 		}
-		defer mockDB.Close()
+		defer func() { _ = mockDB.Close() }()
 
 		// Generate a test key
 		key, _ := slosilo.GenerateKey()

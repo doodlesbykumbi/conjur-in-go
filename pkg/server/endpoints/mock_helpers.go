@@ -38,7 +38,7 @@ func NewMockTestServer(dataKey []byte) (*server.Server, sqlmock.Sqlmock, error) 
 		},
 	)
 	if err != nil {
-		mockDB.Close()
+		_ = mockDB.Close()
 		return nil, nil, err
 	}
 
@@ -72,7 +72,7 @@ func NewMockDB() (*MockDB, error) {
 		},
 	)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 

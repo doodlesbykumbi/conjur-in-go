@@ -12,7 +12,7 @@ func TestStoreSave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	store := NewStoreWithDB(db)
 
@@ -52,7 +52,7 @@ func TestStoreSaveAuthenticateEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	store := NewStoreWithDB(db)
 
@@ -92,7 +92,7 @@ func TestStoreSaveFailedEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	store := NewStoreWithDB(db)
 
@@ -179,7 +179,7 @@ func TestStoreSavePolicyEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	store := NewStoreWithDB(db)
 
@@ -221,7 +221,7 @@ func TestStoreSaveHostFactoryEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	store := NewStoreWithDB(db)
 

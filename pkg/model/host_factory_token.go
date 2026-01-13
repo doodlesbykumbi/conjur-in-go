@@ -29,7 +29,7 @@ func (HostFactoryToken) TableName() string {
 func GenerateToken() string {
 	// Generate 32 random bytes and encode as hex (64 chars)
 	randomBytes := make([]byte, 32)
-	rand.Read(randomBytes)
+	_, _ = rand.Read(randomBytes)
 	return hex.EncodeToString(randomBytes)
 }
 

@@ -34,8 +34,8 @@ func TestSecretsEndpoint(t *testing.T) {
 	apiKey := "test-api-key-secrets"
 
 	// Cleanup before and after
-	CleanupTestData(testServer.DB, account)
-	defer CleanupTestData(testServer.DB, account)
+	_ = CleanupTestData(testServer.DB, account)
+	defer func() { _ = CleanupTestData(testServer.DB, account) }()
 
 	err = SetupTestAccount(testServer.DB, cipher, account, apiKey)
 	if err != nil {
@@ -116,8 +116,8 @@ func TestSecretsEndpoint(t *testing.T) {
 
 	t.Run("retrieve non-existent secret", func(t *testing.T) {
 		// Create variable without storing a secret
-		CreateTestVariable(testServer.DB, account, "empty/var", adminRoleId)
-		GrantPermission(testServer.DB, "execute", account+":variable:empty/var", adminRoleId)
+		_ = CreateTestVariable(testServer.DB, account, "empty/var", adminRoleId)
+		_ = GrantPermission(testServer.DB, "execute", account+":variable:empty/var", adminRoleId)
 
 		req := httptest.NewRequest("GET", "/secrets/"+account+"/variable/empty%2Fvar", nil)
 		req.Header.Set("Authorization", authHeader)

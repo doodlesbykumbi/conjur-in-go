@@ -141,7 +141,7 @@ func handleCreateToken(db *gorm.DB, cipher slosilo.SymmetricCipher) http.Handler
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(tokens)
+		_ = json.NewEncoder(w).Encode(tokens)
 	}
 }
 
@@ -334,6 +334,6 @@ func handleCreateHost(db *gorm.DB, cipher slosilo.SymmetricCipher, srv *server.S
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}
 }

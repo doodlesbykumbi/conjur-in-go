@@ -35,8 +35,8 @@ func TestAuthorization(t *testing.T) {
 	account := "testauthz"
 
 	// Cleanup before and after
-	CleanupTestData(testServer.DB, account)
-	defer CleanupTestData(testServer.DB, account)
+	_ = CleanupTestData(testServer.DB, account)
+	defer func() { _ = CleanupTestData(testServer.DB, account) }()
 
 	err = SetupTestAccount(testServer.DB, cipher, account, "admin-api-key")
 	if err != nil {

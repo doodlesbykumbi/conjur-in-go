@@ -83,6 +83,6 @@ func handleGetPublicKeys(db *gorm.DB, cipher slosilo.SymmetricCipher) http.Handl
 		}
 
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte(result))
+		_, _ = w.Write([]byte(result))
 	}
 }

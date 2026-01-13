@@ -107,7 +107,7 @@ func (l *Logger) Log(event Event) {
 		event.Message(),
 	)
 
-	l.writer.Write([]byte(logLine))
+	_, _ = l.writer.Write([]byte(logLine))
 }
 
 // formatStructuredData formats the structured data according to RFC5424
