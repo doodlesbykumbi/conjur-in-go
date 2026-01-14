@@ -233,7 +233,6 @@ cmd_setup() {
 cmd_migrate() {
     log_info "Running database migrations..."
     docker compose exec -e DATABASE_URL="postgres://conjur:conjur@postgres:5432/conjur?sslmode=disable" \
-        -e MIGRATIONS_PATH="/app/db/migrations" \
         app go run ./cmd/conjurctl db migrate
     log_success "Migrations complete"
 }
@@ -242,7 +241,6 @@ cmd_migrate_down() {
     local steps="${1:-1}"
     log_warn "Rolling back $steps migration(s)..."
     docker compose exec -e DATABASE_URL="postgres://conjur:conjur@postgres:5432/conjur?sslmode=disable" \
-        -e MIGRATIONS_PATH="/app/db/migrations" \
         app go run ./cmd/conjurctl db down "$steps"
     log_success "Rollback complete"
 }
@@ -250,7 +248,6 @@ cmd_migrate_down() {
 cmd_migrate_status() {
     log_info "Migration status:"
     docker compose exec -e DATABASE_URL="postgres://conjur:conjur@postgres:5432/conjur?sslmode=disable" \
-        -e MIGRATIONS_PATH="/app/db/migrations" \
         app go run ./cmd/conjurctl db status
 }
 

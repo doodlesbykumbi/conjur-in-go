@@ -22,6 +22,8 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
+    tags:
+      - embed_migrations
     ldflags:
       - -s -w
       - -X main.Version={{.Version}}

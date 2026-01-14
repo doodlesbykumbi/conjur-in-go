@@ -4,13 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/lib/pq"
 	"github.com/spf13/cobra"
 )
@@ -75,14 +73,6 @@ func init() {
 	dbCmd.AddCommand(dbMigrateStatusCmd)
 }
 
-func getMigrationsPath() string {
-	// Check for MIGRATIONS_PATH env var, otherwise use default
-	if path := os.Getenv("MIGRATIONS_PATH"); path != "" {
-		return "file://" + path
-	}
-	return "file://db/migrations"
-}
-
 func getDatabaseURL() string {
 	return os.Getenv("DATABASE_URL")
 }
@@ -108,10 +98,7 @@ func runMigrations() error {
 		return fmt.Errorf("DATABASE_URL environment variable is required")
 	}
 
-	migrationsPath := getMigrationsPath()
-	fmt.Printf("Running migrations from %s\n", migrationsPath)
-
-	m, err := migrate.New(migrationsPath, getDatabaseURLWithMigrationsTable())
+	m, err := createMigrateInstance(getDatabaseURLWithMigrationsTable())
 	if err != nil {
 		return fmt.Errorf("failed to create migrate instance: %w", err)
 	}
@@ -176,19 +163,16 @@ func syncSequelSchemaMigrations(dbURL string) error {
 		return fmt.Errorf("failed to create schema_migrations table: %w", err)
 	}
 
-	// Get list of migration files
-	migrationsDir := strings.TrimPrefix(getMigrationsPath(), "file://")
-	files, err := filepath.Glob(filepath.Join(migrationsDir, "*.up.sql"))
+	// Get list of migration files (from build-tagged implementation)
+	files, err := listMigrationFiles()
 	if err != nil {
 		return fmt.Errorf("failed to list migration files: %w", err)
 	}
-
 	// Sort files to process in order
 	sort.Strings(files)
 
 	// Insert each migration filename into Sequel's table
-	for _, file := range files {
-		basename := filepath.Base(file)
+	for _, basename := range files {
 		// Extract version number from filename (e.g., "20160628212347_create_roles.up.sql" -> 20160628212347)
 		parts := strings.SplitN(basename, "_", 2)
 		if len(parts) < 2 {
@@ -224,7 +208,7 @@ func runMigrationsDown(steps int) error {
 		return fmt.Errorf("DATABASE_URL environment variable is required")
 	}
 
-	m, err := migrate.New(getMigrationsPath(), getDatabaseURLWithMigrationsTable())
+	m, err := createMigrateInstance(getDatabaseURLWithMigrationsTable())
 	if err != nil {
 		return fmt.Errorf("failed to create migrate instance: %w", err)
 	}
@@ -247,7 +231,7 @@ func showMigrationStatus() error {
 		return fmt.Errorf("DATABASE_URL environment variable is required")
 	}
 
-	m, err := migrate.New(getMigrationsPath(), getDatabaseURLWithMigrationsTable())
+	m, err := createMigrateInstance(getDatabaseURLWithMigrationsTable())
 	if err != nil {
 		return fmt.Errorf("failed to create migrate instance: %w", err)
 	}
