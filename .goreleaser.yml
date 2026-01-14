@@ -27,16 +27,6 @@ builds:
       - -X main.Version={{.Version}}
       - -X main.Commit={{.ShortCommit}}
       - -X main.BuildDate={{.Date}}
-  - id: changelog
-    main: ./cmd/changelog
-    binary: changelog
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-    goarch:
-      - amd64
-
 archives:
   - id: compressed
     formats:

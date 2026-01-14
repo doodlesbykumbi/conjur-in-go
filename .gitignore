@@ -34,3 +34,4 @@ Thumbs.db
 # Build artifacts
 /bin/
 /dist/
+RELEASE_NOTES.md
