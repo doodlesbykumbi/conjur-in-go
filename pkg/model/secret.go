@@ -2,13 +2,24 @@ package model
 
 import (
 	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 )
 
 type Secret struct {
 	ResourceId string
-	Value      []byte `gorm:"type:bytea;"`
+	Version    int
+	Value      []byte     `gorm:"type:bytea;"`
+	ExpiresAt  *time.Time `gorm:"column:expires_at"`
+}
+
+// IsExpired returns true if the secret has an expiration time that has passed
+func (s *Secret) IsExpired() bool {
+	if s.ExpiresAt == nil {
+		return false
+	}
+	return time.Now().After(*s.ExpiresAt)
 }
 
 func (s Secret) TableName() string {

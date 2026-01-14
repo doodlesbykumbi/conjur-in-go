@@ -34,6 +34,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -44,8 +46,26 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Build binary with GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: build --snapshot --clean --single-target
+
+      - name: Find built binary
+        id: find-binary
+        run: |
+          BINARY=$(find dist -name 'conjurctl' -type f | head -1)
+          echo "binary=$BINARY" >> $GITHUB_OUTPUT
+          echo "Found binary: $BINARY"
+          chmod +x "$BINARY"
+
       - name: Run integration tests
-        run: INTEGRATION_TEST=1 go test -v ./test/integration/...
+        run: |
+          INTEGRATION_TEST=1 \
+          CONJUR_BINARY="${{ steps.find-binary.outputs.binary }}" \
+          go test -v -timeout 120s ./test/integration/...
 
   lint:
     name: Lint

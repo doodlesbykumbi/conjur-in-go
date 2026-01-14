@@ -19,6 +19,9 @@ import (
 	"conjur-in-go/pkg/server/middleware"
 )
 
+// ErrSecretExpired is returned when a secret has expired
+var ErrSecretExpired = errors.New("secret has expired")
+
 func fetchSecret(db *gorm.DB, resourceId string, secretVersion string) (*model.Secret, error) {
 	var secret model.Secret
 	query := map[string]interface{}{"resource_id": resourceId}
@@ -30,6 +33,11 @@ func fetchSecret(db *gorm.DB, resourceId string, secretVersion string) (*model.S
 	err := tx.Error
 	if err != nil {
 		return nil, err
+	}
+
+	// Check if secret has expired
+	if secret.IsExpired() {
+		return nil, ErrSecretExpired
 	}
 
 	return &secret, nil
@@ -95,6 +103,12 @@ func RegisterSecretsEndpoints(server *server.Server) {
 					if errors.Is(err, gorm.ErrRecordNotFound) {
 						respondWithError(writer, http.StatusNotFound, map[string]string{
 							"error": fmt.Sprintf("Variable %s has no secret value", varId),
+						})
+						return
+					}
+					if errors.Is(err, ErrSecretExpired) {
+						respondWithError(writer, http.StatusNotFound, map[string]string{
+							"error": fmt.Sprintf("Variable %s has expired", varId),
 						})
 						return
 					}
@@ -179,6 +193,18 @@ func RegisterSecretsEndpoints(server *server.Server) {
 					respondWithError(writer, http.StatusNotFound, map[string]string{"message": "secret is empty or not found."})
 					return
 				}
+				if errors.Is(err, ErrSecretExpired) {
+					audit.Log(audit.FetchEvent{
+						UserID:       roleId,
+						ClientIP:     clientIP,
+						ResourceID:   resourceId,
+						Version:      secretVersion,
+						Success:      false,
+						ErrorMessage: "secret has expired",
+					})
+					respondWithError(writer, http.StatusNotFound, map[string]string{"message": "secret has expired"})
+					return
+				}
 
 				http.Error(writer, err.Error(), http.StatusInternalServerError)
 				return
@@ -195,8 +221,53 @@ func RegisterSecretsEndpoints(server *server.Server) {
 		},
 	).Methods("GET")
 
+	// POST /secrets/{account}/{kind}/{identifier}?expirations - Expire a secret (clear expires_at)
+	// This triggers early rotation by clearing the expiration timestamp
 	secretsRouter.HandleFunc(
-		"/{account}/{kind}/{identifier:.+}", // For 'identifier' we grab the rest of the URL including slashes
+		"/{account}/{kind}/{identifier:.+}",
+		func(writer http.ResponseWriter, request *http.Request) {
+			vars := mux.Vars(request)
+			account := vars["account"]
+			kind := vars["kind"]
+			identifier, err := url.PathUnescape(vars["identifier"])
+			if err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			// Only variables can be expired
+			if kind != "variable" {
+				respondWithError(writer, http.StatusUnprocessableEntity, map[string]string{
+					"error": fmt.Sprintf("Invalid secret kind: %s", kind),
+				})
+				return
+			}
+
+			resourceId := fmt.Sprintf("%s:%s:%s", account, kind, identifier)
+
+			tokenInfo, _ := middleware.GetTokenInfo(request.Context())
+			roleId := tokenInfo.RoleID
+
+			allowed := isRoleAllowedTo(db, roleId, "update", resourceId)
+			if !allowed {
+				http.Error(writer, "role does not have update permissions on secret", http.StatusForbidden)
+				return
+			}
+
+			// Clear expires_at on all versions of this secret
+			tx := db.Model(&model.Secret{}).Where("resource_id = ?", resourceId).Update("expires_at", nil)
+			if tx.Error != nil {
+				respondWithError(writer, http.StatusInternalServerError, map[string]string{"message": tx.Error.Error()})
+				return
+			}
+
+			writer.WriteHeader(http.StatusCreated)
+		},
+	).Methods("POST").Queries("expirations", "")
+
+	// POST /secrets/{account}/{kind}/{identifier} - Create/update a secret value
+	secretsRouter.HandleFunc(
+		"/{account}/{kind}/{identifier:.+}",
 		func(writer http.ResponseWriter, request *http.Request) {
 			newSecretValue, err := io.ReadAll(request.Body)
 			defer func() { _ = request.Body.Close() }()

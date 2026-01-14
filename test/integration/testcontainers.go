@@ -3,11 +3,12 @@ package integration
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -18,32 +19,44 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"conjur-in-go/pkg/server"
-	"conjur-in-go/pkg/server/endpoints"
 	"conjur-in-go/pkg/slosilo"
-	"conjur-in-go/pkg/slosilo/store"
 )
 
 // TestContext holds all the resources needed for integration tests
 type TestContext struct {
-	Server     *server.Server
-	DB         *gorm.DB
-	RawDB      *sql.DB
-	Container  testcontainers.Container
-	ServerURL  string
-	DataKey    []byte
-	Cipher     slosilo.SymmetricCipher
-	HTTPClient *http.Client
-	Cancel     context.CancelFunc
+	DB            *gorm.DB
+	RawDB         *sql.DB
+	Container     testcontainers.Container
+	ServerURL     string
+	DataKey       []byte
+	Cipher        slosilo.SymmetricCipher
+	HTTPClient    *http.Client
+	Cancel        context.CancelFunc
+	ServerProcess *exec.Cmd
 }
 
-// NewTestContext creates a new test context with PostgreSQL testcontainer
+// NewTestContext creates a new test context with PostgreSQL testcontainer and runs the actual binary.
+// Requires CONJUR_BINARY env var to specify the path to the conjurctl binary.
+// Build the binary first with: go build -o conjurctl ./cmd/conjurctl
 func NewTestContext(ctx context.Context) (*TestContext, error) {
-	// Find migrations directory
-	migrationsDir, err := findMigrationsDir()
+	// Find project root and migrations directory
+	projectRoot, err := findProjectRoot()
 	if err != nil {
-		return nil, fmt.Errorf("failed to find migrations directory: %w", err)
+		return nil, fmt.Errorf("failed to find project root: %w", err)
 	}
+	migrationsDir := filepath.Join(projectRoot, "db", "migrations")
+
+	// CONJUR_BINARY is required
+	binaryPath := os.Getenv("CONJUR_BINARY")
+	if binaryPath == "" {
+		return nil, fmt.Errorf("CONJUR_BINARY env var is required. Build the binary first:\n  go build -o conjurctl ./cmd/conjurctl\nThen run:\n  INTEGRATION_TEST=1 CONJUR_BINARY=./conjurctl go test -v ./test/integration/...")
+	}
+
+	// Verify the binary exists
+	if _, err := os.Stat(binaryPath); err != nil {
+		return nil, fmt.Errorf("CONJUR_BINARY path does not exist: %s", binaryPath)
+	}
+	log.Printf("Using binary: %s", binaryPath)
 
 	// Start PostgreSQL container
 	pgContainer, err := tcpostgres.Run(ctx,
@@ -61,14 +74,20 @@ func NewTestContext(ctx context.Context) (*TestContext, error) {
 		return nil, fmt.Errorf("failed to start postgres container: %w", err)
 	}
 
-	// Get connection string
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	// Get connection string for the host (not container network)
+	host, err := pgContainer.Host(ctx)
 	if err != nil {
 		_ = pgContainer.Terminate(ctx)
-		return nil, fmt.Errorf("failed to get connection string: %w", err)
+		return nil, fmt.Errorf("failed to get container host: %w", err)
 	}
+	port, err := pgContainer.MappedPort(ctx, "5432")
+	if err != nil {
+		_ = pgContainer.Terminate(ctx)
+		return nil, fmt.Errorf("failed to get container port: %w", err)
+	}
+	connStr := fmt.Sprintf("postgres://conjur:conjur@%s:%s/conjur_test?sslmode=disable", host, port.Port())
 
-	// Connect with GORM
+	// Connect with GORM for test setup/assertions
 	db, err := gorm.Open(gormpostgres.New(gormpostgres.Config{
 		DSN:                  connStr,
 		PreferSimpleProtocol: true,
@@ -104,64 +123,89 @@ func NewTestContext(ctx context.Context) (*TestContext, error) {
 		return nil, fmt.Errorf("failed to create cipher: %w", err)
 	}
 
-	// Add cipher to DB context for automatic decryption
+	// Add cipher to DB context for automatic decryption in test assertions
 	dbCtx := context.WithValue(context.Background(), "cipher", cipher)
 	db = db.WithContext(dbCtx)
 
-	// Create server
-	keystore := store.NewKeyStore(db)
-	srv := server.NewServer(keystore, cipher, db, "127.0.0.1", "0")
-
-	// Register all endpoints
-	endpoints.RegisterAll(srv)
-
-	// Create listener to get actual port
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	// Start the actual binary
+	serverPort := "18080" // Use a fixed port for testing
+	serverProcess, cancel, err := startBinary(binaryPath, connStr, dataKey, serverPort)
 	if err != nil {
 		_ = pgContainer.Terminate(ctx)
-		return nil, fmt.Errorf("failed to create listener: %w", err)
+		return nil, fmt.Errorf("failed to start server binary: %w", err)
 	}
 
-	// Start server in background with the listener
-	_, cancel := context.WithCancel(ctx)
-	serverErr := make(chan error, 1)
-	go func() {
-		if err := srv.StartWithListener(ln); err != nil && err != http.ErrServerClosed {
-			log.Printf("Server error: %v", err)
-			serverErr <- err
-		}
-	}()
+	serverURL := fmt.Sprintf("http://127.0.0.1:%s", serverPort)
 
-	// Wait for server to be ready and check for immediate errors
-	time.Sleep(200 * time.Millisecond)
-	select {
-	case err := <-serverErr:
+	// Wait for server to be ready
+	if err := waitForServer(serverURL, 30*time.Second); err != nil {
 		cancel()
+		_ = serverProcess.Process.Kill()
 		_ = pgContainer.Terminate(ctx)
-		return nil, fmt.Errorf("server failed to start: %w", err)
-	default:
-		// Server started successfully
+		return nil, fmt.Errorf("server failed to become ready: %w", err)
 	}
-
-	serverURL := fmt.Sprintf("http://%s", ln.Addr().String())
 
 	return &TestContext{
-		Server:     srv,
-		DB:         db,
-		RawDB:      rawDB,
-		Container:  pgContainer,
-		ServerURL:  serverURL,
-		DataKey:    dataKey,
-		Cipher:     cipher,
-		HTTPClient: &http.Client{Timeout: 10 * time.Second},
-		Cancel:     cancel,
+		DB:            db,
+		RawDB:         rawDB,
+		Container:     pgContainer,
+		ServerURL:     serverURL,
+		DataKey:       dataKey,
+		Cipher:        cipher,
+		HTTPClient:    &http.Client{Timeout: 10 * time.Second},
+		Cancel:        cancel,
+		ServerProcess: serverProcess,
 	}, nil
+}
+
+// startBinary starts the conjurctl server binary
+func startBinary(binaryPath, dbURL string, dataKey []byte, port string) (*exec.Cmd, context.CancelFunc, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Use --no-migrate since we already ran migrations in the test setup
+	cmd := exec.CommandContext(ctx, binaryPath, "server", "--no-migrate", "-b", "127.0.0.1", "-p", port)
+	cmd.Env = append(os.Environ(),
+		"DATABASE_URL="+dbURL,
+		"CONJUR_DATA_KEY="+base64.StdEncoding.EncodeToString(dataKey),
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, nil, fmt.Errorf("failed to start binary: %w", err)
+	}
+
+	return cmd, cancel, nil
+}
+
+// waitForServer polls the server until it responds or times out
+func waitForServer(serverURL string, timeout time.Duration) error {
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(serverURL + "/")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return fmt.Errorf("server did not become ready within %v", timeout)
 }
 
 // Close cleans up all test resources
 func (tc *TestContext) Close(ctx context.Context) {
 	if tc.Cancel != nil {
 		tc.Cancel()
+	}
+	if tc.ServerProcess != nil && tc.ServerProcess.Process != nil {
+		_ = tc.ServerProcess.Process.Kill()
+		_ = tc.ServerProcess.Wait()
 	}
 	if tc.RawDB != nil {
 		_ = tc.RawDB.Close()
@@ -171,22 +215,23 @@ func (tc *TestContext) Close(ctx context.Context) {
 	}
 }
 
-// findMigrationsDir locates the migrations directory
-func findMigrationsDir() (string, error) {
+// findProjectRoot locates the project root directory
+func findProjectRoot() (string, error) {
 	// Try relative paths from test directory
 	paths := []string{
-		"../../db/migrations",
-		"../db/migrations",
-		"db/migrations",
+		"../..",
+		"..",
+		".",
 	}
 
 	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
+		goMod := filepath.Join(p, "go.mod")
+		if _, err := os.Stat(goMod); err == nil {
 			return filepath.Abs(p)
 		}
 	}
 
-	return "", fmt.Errorf("migrations directory not found")
+	return "", fmt.Errorf("project root not found (looking for go.mod)")
 }
 
 // runMigrations executes SQL migration files

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -28,7 +29,7 @@ func TestStatusEndpoints(t *testing.T) {
 	// Register endpoints
 	RegisterStatusEndpoints(testServer)
 
-	t.Run("GET / returns status", func(t *testing.T) {
+	t.Run("GET / returns HTML status page", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		w := httptest.NewRecorder()
 
@@ -40,15 +41,19 @@ func TestStatusEndpoints(t *testing.T) {
 			t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, string(body))
 		}
 
-		var result StatusResponse
-		body, _ := io.ReadAll(resp.Body)
-		err := json.Unmarshal(body, &result)
-		if err != nil {
-			t.Fatalf("failed to parse response: %v", err)
+		contentType := resp.Header.Get("Content-Type")
+		if !strings.Contains(contentType, "text/html") {
+			t.Errorf("expected Content-Type text/html, got %q", contentType)
 		}
 
-		if result.Status != "ok" {
-			t.Errorf("expected status 'ok', got %q", result.Status)
+		body, _ := io.ReadAll(resp.Body)
+		bodyStr := string(body)
+
+		if !strings.Contains(bodyStr, "Conjur Status") {
+			t.Error("expected HTML to contain 'Conjur Status'")
+		}
+		if !strings.Contains(bodyStr, "Your Conjur server is running!") {
+			t.Error("expected HTML to contain status message")
 		}
 	})
 
@@ -102,6 +107,54 @@ func TestStatusEndpoints(t *testing.T) {
 			if resp.StatusCode == http.StatusUnauthorized {
 				t.Errorf("endpoint %s should not require auth, got 401", endpoint)
 			}
+		}
+	})
+
+	t.Run("GET /authn/{account}/status returns ok", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/authn/myaccount/status", nil)
+		w := httptest.NewRecorder()
+
+		testServer.Router.ServeHTTP(w, req)
+
+		resp := w.Result()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, string(body))
+		}
+
+		var result AuthenticatorStatusResponse
+		body, _ := io.ReadAll(resp.Body)
+		err := json.Unmarshal(body, &result)
+		if err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+
+		if result.Status != "ok" {
+			t.Errorf("expected status 'ok', got %q", result.Status)
+		}
+	})
+
+	t.Run("GET /authn-oidc/{service_id}/{account}/status returns ok", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/authn-oidc/keycloak/myaccount/status", nil)
+		w := httptest.NewRecorder()
+
+		testServer.Router.ServeHTTP(w, req)
+
+		resp := w.Result()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, string(body))
+		}
+
+		var result AuthenticatorStatusResponse
+		body, _ := io.ReadAll(resp.Body)
+		err := json.Unmarshal(body, &result)
+		if err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+
+		if result.Status != "ok" {
+			t.Errorf("expected status 'ok', got %q", result.Status)
 		}
 	})
 }
