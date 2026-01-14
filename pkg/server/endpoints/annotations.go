@@ -45,7 +45,8 @@ func handleListAnnotations(db *gorm.DB) http.HandlerFunc {
 		resourceId := account + ":" + kind + ":" + identifier
 
 		// Get role from auth context
-		roleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		roleId := tokenInfo.RoleID
 
 		// Check if user can see this resource
 		if !canSeeResource(db, resourceId, roleId) {
@@ -72,7 +73,8 @@ func handleGetAnnotation(db *gorm.DB) http.HandlerFunc {
 		resourceId := account + ":" + kind + ":" + identifier
 
 		// Get role from auth context
-		roleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		roleId := tokenInfo.RoleID
 
 		// Check if user can see this resource
 		if !canSeeResource(db, resourceId, roleId) {
@@ -104,7 +106,8 @@ func handleSetAnnotation(db *gorm.DB) http.HandlerFunc {
 		resourceId := account + ":" + kind + ":" + identifier
 
 		// Get role from auth context
-		roleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		roleId := tokenInfo.RoleID
 
 		// Check if user has update permission on the resource
 		if !isRoleAllowedTo(db, roleId, "update", resourceId) {
@@ -156,7 +159,8 @@ func handleDeleteAnnotation(db *gorm.DB) http.HandlerFunc {
 		resourceId := account + ":" + kind + ":" + identifier
 
 		// Get role from auth context
-		roleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		roleId := tokenInfo.RoleID
 
 		// Check if user has update permission on the resource
 		if !isRoleAllowedTo(db, roleId, "update", resourceId) {

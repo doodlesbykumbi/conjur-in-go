@@ -94,3 +94,20 @@ func (p ParsedToken) Kid() string {
 	kid, _ := p.header["kid"].(string)
 	return kid
 }
+
+func (p ParsedToken) IAT() time.Time {
+	iat, ok := p.claims["iat"].(float64)
+	if !ok {
+		return time.Time{}
+	}
+	return time.Unix(int64(iat), 0)
+}
+
+func (p ParsedToken) Exp() time.Time {
+	exp, ok := p.claims["exp"].(float64)
+	if !ok {
+		// Fall back to iat + 8 minutes if no exp claim
+		return p.IAT().Add(8 * time.Minute)
+	}
+	return time.Unix(int64(exp), 0)
+}

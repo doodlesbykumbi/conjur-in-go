@@ -87,7 +87,8 @@ func handleCreateToken(db *gorm.DB, cipher slosilo.SymmetricCipher) http.Handler
 		}
 
 		// Get role from auth context
-		roleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		roleId := tokenInfo.RoleID
 
 		// Check if user has execute permission on the host factory
 		if !isRoleAllowedTo(db, roleId, "execute", req.HostFactory) {
@@ -165,7 +166,8 @@ func handleDeleteToken(db *gorm.DB) http.HandlerFunc {
 		}
 
 		// Get role from auth context
-		roleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		roleId := tokenInfo.RoleID
 
 		// Check if user has update permission on the host factory
 		if !isRoleAllowedTo(db, roleId, "update", hfToken.ResourceID) {

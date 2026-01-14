@@ -66,7 +66,8 @@ func RegisterSecretsEndpoints(server *server.Server) {
 			variableIds := strings.Split(variableIdsParam, ",")
 
 			// Get role from auth context
-			roleId := request.Context().Value("roleId").(string)
+			tokenInfo, _ := middleware.GetTokenInfo(request.Context())
+			roleId := tokenInfo.RoleID
 
 			// Check if base64 encoding is requested
 			useBase64 := strings.EqualFold(request.Header.Get("Accept-Encoding"), "base64")
@@ -137,7 +138,8 @@ func RegisterSecretsEndpoints(server *server.Server) {
 			resourceId := fmt.Sprintf("%s:%s:%s", account, kind, identifier)
 
 			// Comes from auth
-			roleId := request.Context().Value("roleId").(string)
+			tokenInfo, _ := middleware.GetTokenInfo(request.Context())
+			roleId := tokenInfo.RoleID
 			clientIP := request.RemoteAddr
 			if forwarded := request.Header.Get("X-Forwarded-For"); forwarded != "" {
 				clientIP = forwarded
@@ -215,7 +217,8 @@ func RegisterSecretsEndpoints(server *server.Server) {
 			resourceId := fmt.Sprintf("%s:%s:%s", account, kind, identifier)
 
 			// Comes from auth
-			roleId := request.Context().Value("roleId").(string)
+			tokenInfo, _ := middleware.GetTokenInfo(request.Context())
+			roleId := tokenInfo.RoleID
 			clientIP := request.RemoteAddr
 			if forwarded := request.Header.Get("X-Forwarded-For"); forwarded != "" {
 				clientIP = forwarded
@@ -292,7 +295,8 @@ func handleBatchUpdateSecrets(db *gorm.DB) http.HandlerFunc {
 		account := vars["account"]
 
 		// Get role from auth context
-		roleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		roleId := tokenInfo.RoleID
 		clientIP := r.RemoteAddr
 		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 			clientIP = forwarded

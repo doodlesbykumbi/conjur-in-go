@@ -33,19 +33,26 @@ To run the server requires the environment variables CONJUR_DATA_KEY and DATABAS
 
 By default, database migrations are run on startup. Use --no-migrate to skip.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Validate required environment variables first (fail fast)
+		dataKeyB64, ok := os.LookupEnv("CONJUR_DATA_KEY")
+		if !ok {
+			fmt.Fprintln(os.Stderr, "CONJUR_DATA_KEY environment variable is required")
+			os.Exit(1)
+		}
+
+		if os.Getenv("DATABASE_URL") == "" {
+			fmt.Fprintln(os.Stderr, "DATABASE_URL environment variable is required")
+			os.Exit(1)
+		}
+
 		// Run migrations unless --no-migrate is set
 		noMigrate, _ := cmd.Flags().GetBool("no-migrate")
 		if !noMigrate {
 			log.Println("Running database migrations...")
 			if err := runMigrations(); err != nil {
-				log.Printf("Warning: Migration failed: %v\n", err)
-				// Don't exit - migrations might already be applied
+				fmt.Fprintf(os.Stderr, "Migration failed: %v\n", err)
+				os.Exit(1)
 			}
-		}
-		dataKeyB64, ok := os.LookupEnv("CONJUR_DATA_KEY")
-		if !ok {
-			fmt.Println("No CONJUR_DATA_KEY")
-			os.Exit(1)
 		}
 
 		dataKey, err := base64.StdEncoding.DecodeString(dataKeyB64)

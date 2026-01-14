@@ -62,7 +62,8 @@ func handleGetPolicy(db *gorm.DB) http.HandlerFunc {
 		policyID := account + ":policy:" + identifier
 
 		// Get role from auth context
-		roleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		roleId := tokenInfo.RoleID
 
 		// Check if user can see this policy
 		var canSee bool

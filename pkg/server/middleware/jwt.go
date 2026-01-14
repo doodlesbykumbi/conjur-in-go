@@ -6,12 +6,36 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"conjur-in-go/pkg/slosilo"
 	"conjur-in-go/pkg/slosilo/store"
 )
 
 var tokenRegex = regexp.MustCompile(`^Token token="(.*)"`)
+
+// ContextKey is a type for context keys to avoid collisions
+type ContextKey string
+
+const (
+	// TokenInfoKey is the context key for TokenInfo
+	TokenInfoKey ContextKey = "tokenInfo"
+)
+
+// TokenInfo contains parsed and verified token information
+type TokenInfo struct {
+	RoleID    string
+	Account   string
+	Login     string
+	IssuedAt  time.Time
+	ExpiresAt time.Time
+}
+
+// GetTokenInfo retrieves TokenInfo from context
+func GetTokenInfo(ctx context.Context) (TokenInfo, bool) {
+	info, ok := ctx.Value(TokenInfoKey).(TokenInfo)
+	return info, ok
+}
 
 // JWTAuthenticator is middleware that validates JWT tokens
 type JWTAuthenticator struct {
@@ -104,9 +128,19 @@ func (j *JWTAuthenticator) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		roleId := RoleID(account, authToken.Sub())
+		login := authToken.Sub()
+		roleId := RoleID(account, login)
+
+		tokenInfo := TokenInfo{
+			RoleID:    roleId,
+			Account:   account,
+			Login:     login,
+			IssuedAt:  authToken.IAT(),
+			ExpiresAt: authToken.Exp(),
+		}
+
 		ctx := r.Context()
-		ctx = context.WithValue(ctx, "roleId", roleId)
+		ctx = context.WithValue(ctx, TokenInfoKey, tokenInfo)
 		r = r.WithContext(ctx)
 
 		next.ServeHTTP(w, r)

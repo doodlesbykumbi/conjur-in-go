@@ -65,7 +65,8 @@ func handleListResources(db *gorm.DB) http.HandlerFunc {
 		kind := vars["kind"]
 
 		// Get role from auth context
-		roleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		roleId := tokenInfo.RoleID
 
 		// Parse query parameters - kind can come from URL path or query param
 		if kindParam := r.URL.Query().Get("kind"); kindParam != "" {
@@ -112,7 +113,8 @@ func handleShowResource(db *gorm.DB) http.HandlerFunc {
 		resourceId := account + ":" + kind + ":" + identifier
 
 		// Get role from auth context (the authenticated user)
-		authRoleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		authRoleId := tokenInfo.RoleID
 
 		// Get client IP for audit
 		clientIP := r.RemoteAddr

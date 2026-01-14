@@ -3,7 +3,6 @@ package endpoints
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"conjur-in-go/pkg/server"
 	"conjur-in-go/pkg/server/middleware"
@@ -29,35 +28,17 @@ func RegisterWhoamiEndpoint(s *server.Server) {
 
 func handleWhoami() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Get roleId from context (set by JWT middleware)
-		roleId, ok := r.Context().Value("roleId").(string)
-		if !ok || roleId == "" {
+		// Get token info from context (set by JWT middleware)
+		tokenInfo, ok := middleware.GetTokenInfo(r.Context())
+		if !ok {
 			http.Error(w, "Unable to determine identity", http.StatusUnauthorized)
 			return
 		}
 
-		// Parse roleId: account:kind:identifier
-		parts := strings.SplitN(roleId, ":", 3)
-		if len(parts) < 3 {
-			http.Error(w, "Invalid role ID format", http.StatusInternalServerError)
-			return
-		}
-
-		account := parts[0]
-		kind := parts[1]
-		identifier := parts[2]
-
-		// Format username as kind/identifier (e.g., "user/admin" or "host/myapp")
-		var username string
-		if kind == "user" {
-			username = identifier
-		} else {
-			username = kind + "/" + identifier
-		}
-
 		response := WhoamiResponse{
-			Account:  account,
-			Username: username,
+			Account:  tokenInfo.Account,
+			Username: tokenInfo.Login,
+			TokenIAT: tokenInfo.IssuedAt.Unix(),
 		}
 
 		w.Header().Set("Content-Type", "application/json")

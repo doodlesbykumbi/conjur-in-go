@@ -59,7 +59,8 @@ func handleShowRole(db *gorm.DB) http.HandlerFunc {
 		roleId := account + ":" + kind + ":" + identifier
 
 		// Get authenticated role from context
-		authRoleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		authRoleId := tokenInfo.RoleID
 
 		// Check query parameters for specific actions
 		if _, hasMembers := r.URL.Query()["members"]; hasMembers {
@@ -323,7 +324,8 @@ func handleAddMember(db *gorm.DB) http.HandlerFunc {
 		}
 
 		// Get authenticated role from context
-		authRoleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		authRoleId := tokenInfo.RoleID
 
 		// Check if user has create permission on the role's policy
 		var policyId string
@@ -384,7 +386,8 @@ func handleDeleteMember(db *gorm.DB) http.HandlerFunc {
 		}
 
 		// Get authenticated role from context
-		authRoleId := r.Context().Value("roleId").(string)
+		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
+		authRoleId := tokenInfo.RoleID
 
 		// Check if user has update permission on the role's policy
 		var policyId string
