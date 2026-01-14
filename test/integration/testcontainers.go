@@ -113,16 +113,7 @@ func NewTestContext(ctx context.Context) (*TestContext, error) {
 	srv := server.NewServer(keystore, cipher, db, "127.0.0.1", "0")
 
 	// Register all endpoints
-	endpoints.RegisterAuthenticateEndpoint(srv)
-	endpoints.RegisterSecretsEndpoints(srv)
-	endpoints.RegisterPoliciesEndpoints(srv)
-	endpoints.RegisterResourcesEndpoints(srv)
-	endpoints.RegisterRolesEndpoints(srv)
-	endpoints.RegisterStatusEndpoints(srv)
-	endpoints.RegisterWhoamiEndpoint(srv)
-	endpoints.RegisterPublicKeysEndpoints(srv)
-	endpoints.RegisterHostFactoryEndpoints(srv)
-	endpoints.RegisterAnnotationsEndpoints(srv)
+	endpoints.RegisterAll(srv)
 
 	// Create listener to get actual port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

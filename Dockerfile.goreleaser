@@ -1,0 +1,31 @@
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+
+# Create non-root user
+RUN addgroup -g 1000 conjur && \
+    adduser -u 1000 -G conjur -s /bin/sh -D conjur
+
+ENV CONJUR_HOME=/opt/conjur-server \
+    PORT=80 \
+    RAILS_ENV=production
+
+WORKDIR ${CONJUR_HOME}
+
+# Create required directories
+RUN mkdir -p /opt/conjur/etc/ssl/ca \
+             /opt/conjur/etc/ssl/cert \
+             /run/authn-local && \
+    chown -R conjur:conjur /opt/conjur /run/authn-local
+
+# Copy pre-built binary from GoReleaser
+COPY conjurctl /usr/local/bin/conjurctl
+COPY db/migrations ./db/migrations
+
+# Switch to non-root user
+USER conjur
+
+EXPOSE ${PORT}
+
+ENTRYPOINT ["conjurctl"]
+CMD ["server"]

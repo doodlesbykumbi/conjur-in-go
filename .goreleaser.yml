@@ -1,0 +1,72 @@
+version: 2
+
+project_name: conjurctl
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: conjurctl
+    main: ./cmd/conjurctl
+    binary: conjurctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.ShortCommit}}
+      - -X main.BuildDate={{.Date}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  use: github-native
+
+dockers:
+  - image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:latest"
+    dockerfile: Dockerfile.goreleaser
+    extra_files:
+      - db/migrations
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--platform=linux/amd64"
+
+release:
+  github:
+    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
+    name: conjur-in-go
+  draft: false
+  prerelease: auto
+  name_template: "{{.Tag}}"
+  header: |
+    ## What's Changed
+    
+    See [CHANGELOG.md](https://github.com/{{ .Env.GITHUB_REPOSITORY_OWNER }}/conjur-in-go/blob/{{ .Tag }}/CHANGELOG.md) for full details.
