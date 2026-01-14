@@ -16,3 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JWT-based authentication
 - Policy loading with YAML support
 - Docker image support
+
+[Unreleased]: https://github.com/doodlesbykumbi/conjur-in-go/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/doodlesbykumbi/conjur-in-go/compare/373e53d...v0.0.1

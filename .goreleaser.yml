@@ -1,6 +1,6 @@
 version: 2
 
-project_name: conjurctl
+project_name: conjur-in-go
 
 before:
   hooks:
@@ -27,9 +27,18 @@ builds:
       - -X main.Version={{.Version}}
       - -X main.Commit={{.ShortCommit}}
       - -X main.BuildDate={{.Date}}
+  - id: changelog
+    main: ./cmd/changelog
+    binary: changelog
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
 
 archives:
-  - id: default
+  - id: compressed
     formats:
       - tar.gz
     format_overrides:
@@ -37,12 +46,16 @@ archives:
         formats:
           - zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: binary
+    formats:
+      - binary
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
 
 checksum:
   name_template: 'checksums.txt'
 
 changelog:
-  use: github-native
+  disable: true
 
 dockers:
   - image_templates:
@@ -66,7 +79,3 @@ release:
   draft: false
   prerelease: auto
   name_template: "{{.Tag}}"
-  header: |
-    ## What's Changed
-    
-    See [CHANGELOG.md](https://github.com/{{ .Env.GITHUB_REPOSITORY_OWNER }}/conjur-in-go/blob/{{ .Tag }}/CHANGELOG.md) for full details.
