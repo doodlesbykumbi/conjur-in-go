@@ -45,7 +45,10 @@ checksum:
   name_template: 'checksums.txt'
 
 changelog:
-  disable: true
+  use: git
+  filters:
+    exclude:
+      - ".*"
 
 dockers:
   - image_templates:
@@ -69,3 +72,4 @@ release:
   draft: false
   prerelease: auto
   name_template: "{{.Tag}}"
+  mode: replace
