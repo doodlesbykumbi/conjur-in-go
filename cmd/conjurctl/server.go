@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"gorm.io/driver/postgres"
@@ -22,8 +23,28 @@ import (
 // NOTES
 // tokenSigningPrivateKey is stored in slosilo keystore
 
-const defaultBindAddress = "0.0.0.0"
-const defaultPort = "8000"
+func defaultBindAddress() string {
+	if addr := os.Getenv("BIND_ADDRESS"); addr != "" {
+		return addr
+	}
+	return "0.0.0.0"
+}
+
+func defaultPort() string {
+	if port := os.Getenv("PORT"); port != "" {
+		return port
+	}
+	return "8000"
+}
+
+func defaultPortInt() int {
+	if port := os.Getenv("PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			return p
+		}
+	}
+	return 8000
+}
 
 // serverCmd represents the server command
 var serverCmd = &cobra.Command{
@@ -117,7 +138,7 @@ func init() {
 
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
-	serverCmd.Flags().StringP("port", "p", defaultPort, "server listen port")
-	serverCmd.Flags().StringP("bind-address", "b", defaultBindAddress, "server bind address")
+	serverCmd.Flags().StringP("port", "p", defaultPort(), "server listen port")
+	serverCmd.Flags().StringP("bind-address", "b", defaultBindAddress(), "server bind address")
 	serverCmd.Flags().Bool("no-migrate", false, "skip running database migrations on start")
 }

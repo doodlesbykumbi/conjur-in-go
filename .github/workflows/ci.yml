@@ -3,152 +3,211 @@ name: CI
 on:
   push:
     branches: [main, master]
+    tags: ['v*']
   pull_request:
     branches: [main, master]
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+permissions:
+  contents: write
+  packages: write
+
 jobs:
+  # ============================================
+  # Validation jobs - run in parallel
+  # ============================================
   test:
-    name: Test
+    name: Unit Tests
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run unit tests
-        run: go test -v -race -coverprofile=coverage.out ./...
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache: true
-
-      - name: Build binary with GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: latest
-          args: build --snapshot --clean --single-target
-
-      - name: Find binary
-        id: find-binary
-        run: |
-          BINARY=$(find dist -type f -name 'conjurctl' ! -name '*.go' | head -1)
-          echo "Found binary: $BINARY"
-          chmod +x "$BINARY"
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: conjurctl-binary
-          path: dist/
-          retention-days: 1
-
-  integration-test:
-    name: Integration Test
-    runs-on: ubuntu-latest
-    needs: build
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Download binary
-        uses: actions/download-artifact@v4
-        with:
-          name: conjurctl-binary
-          path: dist/
-
-      - name: Find and verify binary
-        id: find-binary
-        run: |
-          echo "Contents of dist directory:"
-          find dist -type f -ls
-          
-          BINARY=$(find dist -type f -name 'conjurctl' ! -name '*.go' | head -1)
-          if [ -z "$BINARY" ]; then
-            echo "ERROR: Could not find conjurctl binary"
-            exit 1
-          fi
-          echo "Found binary: $BINARY"
-          chmod +x "$BINARY"
-          # Use absolute path to avoid issues
-          echo "binary=$(pwd)/$BINARY" >> $GITHUB_OUTPUT
-
-      - name: Run integration tests
-        run: |
-          INTEGRATION_TEST=1 \
-          CONJUR_BINARY="${{ steps.find-binary.outputs.binary }}" \
-          go test -v -timeout 120s ./test/integration/...
+      - run: go test -v -race -coverprofile=coverage.out ./...
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: true
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v7
+      - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.0.2
 
   changelog:
     name: Changelog
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: true
+      - run: go build -o changelog ./cmd/changelog
+      - run: ./changelog validate
+      - run: go test -v ./cmd/changelog/...
 
-      - name: Build changelog tool
-        run: go build -o changelog ./cmd/changelog
+  # ============================================
+  # Build - single GoReleaser build for everything
+  # ============================================
+  build:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: Build with GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          # Build all targets for releases, single target for PRs/branches
+          args: build --snapshot --clean ${{ github.event_name == 'pull_request' && '--single-target' || '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: dist/
+          retention-days: 7
 
-      - name: Validate changelog
-        run: ./changelog validate
+  # ============================================
+  # Integration tests - uses build artifacts
+  # ============================================
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - run: go mod download
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: dist/
+      - name: Find binary
+        id: find-binary
+        run: |
+          BINARY=$(find dist -path '*linux_amd64*' -name 'conjurctl' -type f | head -1)
+          chmod +x "$BINARY"
+          echo "binary=$(pwd)/$BINARY" >> $GITHUB_OUTPUT
+      - name: Run integration tests
+        run: |
+          INTEGRATION_TEST=1 \
+          CONJUR_BINARY="${{ steps.find-binary.outputs.binary }}" \
+          go test -v -timeout 120s ./test/integration/...
 
-      - name: Run changelog tests
-        run: go test -v ./cmd/changelog/...
+  # ============================================
+  # Docker build - uses pre-built binary
+  # ============================================
+  docker:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: dist/
+      - name: Prepare binary for Docker
+        run: |
+          BINARY=$(find dist -path '*linux_amd64*' -name 'conjurctl' -type f | head -1)
+          if [ -z "$BINARY" ]; then
+            echo "ERROR: Could not find linux amd64 binary"
+            find dist -type f -name 'conjurctl' -ls
+            exit 1
+          fi
+          chmod +x "$BINARY"
+          mkdir -p bin
+          cp "$BINARY" bin/conjurctl
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.prebuilt
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Test image
+        run: |
+          docker build -t conjur-in-go:test -f Dockerfile.prebuilt .
+          docker run --rm conjur-in-go:test --help
+          docker run --rm conjur-in-go:test data-key generate
 
+  # ============================================
+  # Release - only on tags, after all validation
+  # ============================================
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, lint, changelog, integration-test, docker]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare changelog
+        run: |
+          go build -o changelog ./cmd/changelog
+          ./changelog extract --version "${GITHUB_REF_NAME}" > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "Error: No changelog entry found for ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+          cat RELEASE_NOTES.md
+      - name: Run GoReleaser Release
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --release-notes=RELEASE_NOTES.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}

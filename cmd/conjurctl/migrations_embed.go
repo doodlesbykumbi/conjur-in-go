@@ -12,10 +12,6 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
-func init() {
-	fmt.Println("Using embedded migrations (production build)")
-}
-
 func createMigrateInstance(dbURL string) (*migrate.Migrate, error) {
 	migrationsFS, err := fs.Sub(db.Migrations, "migrations")
 	if err != nil {

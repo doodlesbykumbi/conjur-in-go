@@ -36,7 +36,7 @@ Example:
 
 func init() {
 	rootCmd.AddCommand(waitCmd)
-	waitCmd.Flags().IntP("port", "p", 80, "Server port to check")
+	waitCmd.Flags().IntP("port", "p", defaultPortInt(), "Server port to check")
 	waitCmd.Flags().IntP("retries", "r", 90, "Number of retries")
 }
 
@@ -44,19 +44,23 @@ func waitForServer(port, retries int) error {
 	url := fmt.Sprintf("http://localhost:%d/", port)
 	client := &http.Client{Timeout: 2 * time.Second}
 
+	fmt.Println("Waiting for Conjur to be ready...")
+
 	for i := 0; i < retries; i++ {
 		resp, err := client.Get(url)
 		if err == nil {
 			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
+			if resp.StatusCode < 300 {
+				fmt.Println()
+				fmt.Println("Conjur is ready!")
 				return nil
 			}
 		}
 
-		if i < retries-1 {
-			time.Sleep(1 * time.Second)
-		}
+		fmt.Print(".")
+		time.Sleep(1 * time.Second)
 	}
 
-	return fmt.Errorf("server at %s did not respond after %d retries", url, retries)
+	fmt.Println()
+	return fmt.Errorf("Conjur is not ready after %d seconds", retries)
 }
