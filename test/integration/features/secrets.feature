@@ -9,9 +9,10 @@ Feature: Secrets Management
     And I am authenticated as "admin" in account "myorg"
 
   Scenario: Store and retrieve a secret
-    Given a variable "db/password" exists in account "myorg"
-    And I have "update" permission on "myorg:variable:db/password"
-    And I have "execute" permission on "myorg:variable:db/password"
+    Given I load the following policy to "root":
+      """
+      - !variable db/password
+      """
     When I store the value "super-secret-123" in variable "db/password"
     Then the response status should be 201
     When I retrieve the variable "db/password"
@@ -19,21 +20,33 @@ Feature: Secrets Management
     And the response body should be "super-secret-123"
 
   Scenario: Retrieve non-existent secret
-    Given a variable "empty/var" exists in account "myorg"
-    And I have "execute" permission on "myorg:variable:empty/var"
+    Given I load the following policy to "root":
+      """
+      - !variable empty/var
+      """
     When I retrieve the variable "empty/var"
     Then the response status should be 404
 
   Scenario: Store secret without permission
-    Given a variable "restricted/secret" exists in account "myorg"
+    Given I load the following policy to "root":
+      """
+      - !user limited-user
+      - !variable restricted/secret
+      - !permit
+        role: !user limited-user
+        privilege: [ execute ]
+        resource: !variable restricted/secret
+      """
+    And I authenticate as "limited-user" in account "myorg" with the correct API key
     When I store the value "should-fail" in variable "restricted/secret"
     Then the response status should be 403
 
   Scenario: Batch retrieve secrets
-    Given a variable "app/db-host" exists in account "myorg"
-    And a variable "app/db-port" exists in account "myorg"
-    And I have "execute" permission on "myorg:variable:app/db-host"
-    And I have "execute" permission on "myorg:variable:app/db-port"
+    Given I load the following policy to "root":
+      """
+      - !variable app/db-host
+      - !variable app/db-port
+      """
     And the variable "app/db-host" has value "localhost"
     And the variable "app/db-port" has value "5432"
     When I batch retrieve variables "myorg:variable:app/db-host,myorg:variable:app/db-port"
@@ -42,18 +55,20 @@ Feature: Secrets Management
     And the response should contain secret "myorg:variable:app/db-port" with value "5432"
 
   Scenario: Expired secret returns 404
-    Given a variable "rotating/secret" exists in account "myorg"
-    And I have "execute" permission on "myorg:variable:rotating/secret"
-    And I have "update" permission on "myorg:variable:rotating/secret"
+    Given I load the following policy to "root":
+      """
+      - !variable rotating/secret
+      """
     And the variable "rotating/secret" has value "rotating-value"
     And the variable "rotating/secret" has expired
     When I retrieve the variable "rotating/secret"
     Then the response status should be 404
 
   Scenario: Expire endpoint clears expiration
-    Given a variable "expirable/secret" exists in account "myorg"
-    And I have "execute" permission on "myorg:variable:expirable/secret"
-    And I have "update" permission on "myorg:variable:expirable/secret"
+    Given I load the following policy to "root":
+      """
+      - !variable expirable/secret
+      """
     And the variable "expirable/secret" has value "expirable-value"
     And the variable "expirable/secret" has expired
     When I expire the variable "expirable/secret"

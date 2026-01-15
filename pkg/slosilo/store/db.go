@@ -90,3 +90,68 @@ func (k KeyStore) ByAccount(account string) (*StoredKey, error) {
 
 	return k.fetchKey(map[string]string{"id": id})
 }
+
+// List returns all key IDs in the keystore
+func (k KeyStore) List() ([]string, error) {
+	// Use raw query to avoid triggering AfterFind hook which requires cipher
+	var ids []string
+	if err := k.db.Raw(`SELECT id FROM slosilo_keystore`).Scan(&ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Get retrieves a key by its ID
+func (k KeyStore) Get(id string) (*StoredKey, error) {
+	if key, ok := k.keysById[id]; ok {
+		return key, nil
+	}
+	return k.fetchKey(map[string]string{"id": id})
+}
+
+// Put stores a key with the given ID
+func (k KeyStore) Put(id string, key *slosilo.Key) error {
+	fingerprint := key.Fingerprint()
+	keyBytes, err := key.Serialize()
+	if err != nil {
+		return err
+	}
+
+	storedKey := model.Key{
+		Id:          id,
+		Fingerprint: fingerprint,
+		Key:         keyBytes,
+	}
+
+	if err := k.db.Create(&storedKey).Error; err != nil {
+		return err
+	}
+
+	// Cache the key
+	accountKeyIdMatches := accountKeyIdRgx.FindStringSubmatch(id)
+	account := ""
+	if len(accountKeyIdMatches) > 1 {
+		account = accountKeyIdMatches[1]
+	}
+
+	cached := &StoredKey{
+		Key:     key,
+		account: account,
+	}
+	k.keysById[id] = cached
+	k.keysByFingerprint[fingerprint] = cached
+
+	return nil
+}
+
+// Delete removes a key by its ID
+func (k KeyStore) Delete(id string) error {
+	// Remove from cache
+	if key, ok := k.keysById[id]; ok {
+		delete(k.keysByFingerprint, key.Fingerprint())
+		delete(k.keysById, id)
+	}
+
+	// Remove from database
+	return k.db.Where("id = ?", id).Delete(&model.Key{}).Error
+}

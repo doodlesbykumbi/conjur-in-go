@@ -27,8 +27,8 @@ jobs:
       - name: Run unit tests
         run: go test -v -race -coverprofile=coverage.out ./...
 
-  integration-test:
-    name: Integration Test
+  build:
+    name: Build
     runs-on: ubuntu-latest
     
     steps:
@@ -43,9 +43,6 @@ jobs:
           go-version: '1.24'
           cache: true
 
-      - name: Download dependencies
-        run: go mod download
-
       - name: Build binary with GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -53,13 +50,59 @@ jobs:
           version: latest
           args: build --snapshot --clean --single-target
 
-      - name: Find built binary
+      - name: Find binary
         id: find-binary
         run: |
-          BINARY=$(find dist -name 'conjurctl' -type f | head -1)
-          echo "binary=$BINARY" >> $GITHUB_OUTPUT
+          BINARY=$(find dist -type f -name 'conjurctl' ! -name '*.go' | head -1)
           echo "Found binary: $BINARY"
           chmod +x "$BINARY"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: conjurctl-binary
+          path: dist/
+          retention-days: 1
+
+  integration-test:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: conjurctl-binary
+          path: dist/
+
+      - name: Find and verify binary
+        id: find-binary
+        run: |
+          echo "Contents of dist directory:"
+          find dist -type f -ls
+          
+          BINARY=$(find dist -type f -name 'conjurctl' ! -name '*.go' | head -1)
+          if [ -z "$BINARY" ]; then
+            echo "ERROR: Could not find conjurctl binary"
+            exit 1
+          fi
+          echo "Found binary: $BINARY"
+          chmod +x "$BINARY"
+          # Use absolute path to avoid issues
+          echo "binary=$(pwd)/$BINARY" >> $GITHUB_OUTPUT
 
       - name: Run integration tests
         run: |
@@ -109,22 +152,3 @@ jobs:
       - name: Run changelog tests
         run: go test -v ./cmd/changelog/...
 
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    needs: [test, lint, changelog]
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache: true
-
-      - name: Build binary
-        run: |
-          CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o conjurctl ./cmd/conjurctl
-          ./conjurctl --help

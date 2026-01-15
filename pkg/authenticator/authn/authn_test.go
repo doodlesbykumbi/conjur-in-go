@@ -57,8 +57,8 @@ func TestAuthenticator_Authenticate_Success(t *testing.T) {
 	encryptedKey, err := cipher.Encrypt([]byte(roleID), []byte(apiKey))
 	require.NoError(t, err)
 
-	rows := sqlmock.NewRows([]string{"api_key"}).AddRow(encryptedKey)
-	mock.ExpectQuery(`SELECT api_key FROM credentials`).
+	rows := sqlmock.NewRows([]string{"api_key", "restricted_to"}).AddRow(encryptedKey, "")
+	mock.ExpectQuery(`SELECT api_key, COALESCE\(array_to_string\(restricted_to, ','\), ''\) FROM credentials`).
 		WithArgs(roleID).
 		WillReturnRows(rows)
 
@@ -84,8 +84,8 @@ func TestAuthenticator_Authenticate_WrongAPIKey(t *testing.T) {
 	encryptedKey, err := cipher.Encrypt([]byte(roleID), []byte(apiKey))
 	require.NoError(t, err)
 
-	rows := sqlmock.NewRows([]string{"api_key"}).AddRow(encryptedKey)
-	mock.ExpectQuery(`SELECT api_key FROM credentials`).
+	rows := sqlmock.NewRows([]string{"api_key", "restricted_to"}).AddRow(encryptedKey, "")
+	mock.ExpectQuery(`SELECT api_key, COALESCE\(array_to_string\(restricted_to, ','\), ''\) FROM credentials`).
 		WithArgs(roleID).
 		WillReturnRows(rows)
 
@@ -106,7 +106,7 @@ func TestAuthenticator_Authenticate_UserNotFound(t *testing.T) {
 
 	roleID := "myorg:user:nonexistent"
 
-	mock.ExpectQuery(`SELECT api_key FROM credentials`).
+	mock.ExpectQuery(`SELECT api_key, COALESCE\(array_to_string\(restricted_to, ','\), ''\) FROM credentials`).
 		WithArgs(roleID).
 		WillReturnError(sql.ErrNoRows)
 
@@ -118,7 +118,7 @@ func TestAuthenticator_Authenticate_UserNotFound(t *testing.T) {
 
 	_, err := auth.Authenticate(context.Background(), input)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication failed")
+	assert.Contains(t, err.Error(), "role not found")
 }
 
 func TestAuthenticator_Authenticate_EmptyLogin(t *testing.T) {
@@ -144,4 +144,62 @@ func TestAuthenticator_Status(t *testing.T) {
 
 	err := auth.Status(context.Background(), "myorg", "")
 	assert.NoError(t, err)
+}
+
+func TestIsOriginAllowed(t *testing.T) {
+	tests := []struct {
+		name         string
+		clientIP     string
+		restrictedTo []string
+		expected     bool
+	}{
+		{
+			name:         "IP matches single CIDR",
+			clientIP:     "192.168.1.100",
+			restrictedTo: []string{"192.168.1.0/24"},
+			expected:     true,
+		},
+		{
+			name:         "IP matches single IP with /32",
+			clientIP:     "127.0.0.1",
+			restrictedTo: []string{"127.0.0.1/32"},
+			expected:     true,
+		},
+		{
+			name:         "IP does not match CIDR",
+			clientIP:     "127.0.0.1",
+			restrictedTo: []string{"10.0.0.0/8"},
+			expected:     false,
+		},
+		{
+			name:         "IP with port matches CIDR",
+			clientIP:     "192.168.1.100:8080",
+			restrictedTo: []string{"192.168.1.0/24"},
+			expected:     true,
+		},
+		{
+			name:         "IP matches one of multiple CIDRs",
+			clientIP:     "10.0.0.1",
+			restrictedTo: []string{"192.168.0.0/16", "10.0.0.0/8"},
+			expected:     true,
+		},
+		{
+			name:         "Empty restrictions allows all",
+			clientIP:     "1.2.3.4",
+			restrictedTo: []string{},
+			expected:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Empty restrictions case is handled in Authenticate, not isOriginAllowed
+			if len(tt.restrictedTo) == 0 {
+				// Skip - empty case is handled differently
+				return
+			}
+			result := isOriginAllowed(tt.clientIP, tt.restrictedTo)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

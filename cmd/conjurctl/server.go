@@ -87,10 +87,13 @@ By default, database migrations are run on startup. Use --no-migrate to skip.`,
 
 		keystore := store.NewKeyStore(db)
 
-		// Register authenticators
+		// Register basic authenticator
 		authnAuth := authn.New(db, cipher)
 		authenticator.DefaultRegistry.Register(authnAuth)
 		_ = authenticator.DefaultRegistry.Enable("authn")
+
+		// Note: JWT authenticators are created on-demand during request handling
+		// based on CONJUR_AUTHENTICATORS config. No pre-registration needed.
 
 		host, _ := cmd.Flags().GetString("bind-address")
 		port, _ := cmd.Flags().GetString("port")

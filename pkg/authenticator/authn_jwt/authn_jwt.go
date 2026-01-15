@@ -275,7 +275,7 @@ func (a *Authenticator) refreshJWKS(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to fetch OIDC discovery: %w", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		var discovery struct {
 			JWKSURI string `json:"jwks_uri"`
@@ -295,7 +295,7 @@ func (a *Authenticator) refreshJWKS(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to fetch JWKS: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

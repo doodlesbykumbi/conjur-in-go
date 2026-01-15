@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 
+	"conjur-in-go/pkg/model"
 	"conjur-in-go/pkg/policy"
 	"conjur-in-go/pkg/server"
 	"conjur-in-go/pkg/server/middleware"
@@ -81,7 +82,7 @@ func handleGetPolicy(db *gorm.DB) http.HandlerFunc {
 				return
 			}
 
-			var pv policy.PolicyVersion
+			var pv model.PolicyVersion
 			result := db.Where("resource_id = ? AND version = ?", policyID, version).First(&pv)
 			if result.Error != nil {
 				respondWithError(w, http.StatusNotFound, map[string]string{"error": "Policy version not found"})

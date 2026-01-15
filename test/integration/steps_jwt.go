@@ -68,7 +68,7 @@ func (s *StepsContext) setVariableValue(variableID, value string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -81,10 +81,16 @@ func (s *StepsContext) setVariableValue(variableID, value string) error {
 func (s *StepsContext) theAuthnJWTAuthenticatorIsEnabled(serviceID string) error {
 	jwtServiceID = serviceID
 
-	// Create and register the authenticator that reads config from DB
-	jwtAuth := authn_jwt.NewFromDB(s.tc.DB, s.tc.Cipher, serviceID, s.account)
-	authenticator.DefaultRegistry.Register(jwtAuth)
-	return authenticator.DefaultRegistry.Enable("authn-jwt/" + serviceID)
+	// In binary mode, authenticators are enabled via CONJUR_AUTHENTICATORS env var
+	// In inline mode, we need to register it for the in-process server
+	if s.tc.InlineServer != nil {
+		jwtAuth := authn_jwt.NewFromDB(s.tc.DB, s.tc.Cipher, serviceID, s.account)
+		authenticator.DefaultRegistry.Register(jwtAuth)
+		return authenticator.DefaultRegistry.Enable("authn-jwt/" + serviceID)
+	}
+	// For binary mode, the server reads config from CONJUR_AUTHENTICATORS
+	// which is set in testcontainers.go startBinary()
+	return nil
 }
 
 func (s *StepsContext) iAuthenticateViaAuthnJWTWithValidTokenForHost(hostID string) error {
@@ -104,7 +110,7 @@ func (s *StepsContext) iAuthenticateViaAuthnJWTWithValidTokenForHost(hostID stri
 		return err
 	}
 	s.responseBody, _ = io.ReadAll(s.response.Body)
-	s.response.Body.Close()
+	_ = s.response.Body.Close()
 	return nil
 }
 
@@ -126,7 +132,7 @@ func (s *StepsContext) iAuthenticateViaAuthnJWTWithInvalidTokenForHost(hostID st
 		return err
 	}
 	s.responseBody, _ = io.ReadAll(s.response.Body)
-	s.response.Body.Close()
+	_ = s.response.Body.Close()
 	return nil
 }
 
@@ -156,6 +162,6 @@ func (s *StepsContext) iAuthenticateViaAuthnJWTWithService(serviceID string) err
 		return err
 	}
 	s.responseBody, _ = io.ReadAll(s.response.Body)
-	s.response.Body.Close()
+	_ = s.response.Body.Close()
 	return nil
 }

@@ -88,5 +88,6 @@ Feature: JWT Authentication
     Then the response status should be 403
 
   Scenario: JWT authentication fails when authenticator not configured
+    # A non-existent authenticator returns 403 (not enabled) since it's not in CONJUR_AUTHENTICATORS
     When I authenticate via authn-jwt with service "nonexistent"
-    Then the response status should be 404
+    Then the response status should be 403

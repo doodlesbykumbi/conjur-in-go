@@ -9,6 +9,9 @@ import (
 
 	"conjur-in-go/pkg/authenticator"
 	"conjur-in-go/pkg/server"
+
+	"github.com/gorilla/mux"
+	"gorm.io/gorm"
 )
 
 // InfoResponse represents the response from / when JSON is requested
@@ -31,6 +34,8 @@ type AuthenticatorStatusResponse struct {
 
 // RegisterStatusEndpoints registers the status and info endpoints
 func RegisterStatusEndpoints(s *server.Server) {
+	db := s.DB
+
 	// GET / - Status page (no auth required) - returns HTML like Ruby
 	s.Router.HandleFunc("/", handleStatus()).Methods("GET")
 
@@ -39,8 +44,8 @@ func RegisterStatusEndpoints(s *server.Server) {
 
 	// GET /{authenticator}/{account}/status - Authenticator status (no auth required for now)
 	// This matches the Ruby pattern: /:authenticator(/:service_id)/:account/status
-	s.Router.HandleFunc("/{authenticator}/{account}/status", handleAuthenticatorStatus()).Methods("GET")
-	s.Router.HandleFunc("/{authenticator}/{service_id}/{account}/status", handleAuthenticatorStatus()).Methods("GET")
+	s.Router.HandleFunc("/{authenticator}/{account}/status", handleAuthenticatorStatus(db)).Methods("GET")
+	s.Router.HandleFunc("/{authenticator}/{service_id}/{account}/status", handleAuthenticatorStatus(db)).Methods("GET")
 }
 
 func handleStatus() http.HandlerFunc {
@@ -126,16 +131,71 @@ func handleAuthenticators() http.HandlerFunc {
 	}
 }
 
-func handleAuthenticatorStatus() http.HandlerFunc {
+// AuthenticatorStatusErrorResponse represents an error response from authenticator status
+type AuthenticatorStatusErrorResponse struct {
+	Status string `json:"status"`
+	Error  string `json:"error"`
+}
+
+func handleAuthenticatorStatus(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// For now, all configured authenticators are considered healthy
-		// In the future, this would check specific authenticator health
-		// (e.g., OIDC provider connectivity, LDAP server availability)
-		response := AuthenticatorStatusResponse{
-			Status: "ok",
+		vars := mux.Vars(r)
+		authnType := vars["authenticator"]
+		account := vars["account"]
+		serviceID := vars["service_id"]
+
+		// Check 1: Database connectivity
+		if err := db.Exec("SELECT 1").Error; err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(AuthenticatorStatusErrorResponse{
+				Status: "error",
+				Error:  "database connectivity check failed",
+			})
+			return
 		}
 
+		// Check 2: Authenticator is enabled
+		registry := authenticator.DefaultRegistry
+		authnName := authnType
+		if serviceID != "" {
+			authnName = authnType + "/" + serviceID
+		}
+
+		if !registry.IsEnabled(authnName) && !registry.IsEnabled(authnType) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotImplemented)
+			_ = json.NewEncoder(w).Encode(AuthenticatorStatusErrorResponse{
+				Status: "error",
+				Error:  "authenticator is not enabled",
+			})
+			return
+		}
+
+		// Check 3: For authn-jwt, verify required variables exist
+		if authnType == "authn-jwt" && serviceID != "" {
+			// Check if public-keys or jwks-uri variable exists
+			publicKeysVar := account + ":variable:conjur/authn-jwt/" + serviceID + "/public-keys"
+			jwksURIVar := account + ":variable:conjur/authn-jwt/" + serviceID + "/jwks-uri"
+
+			var count int64
+			db.Raw(`SELECT COUNT(*) FROM resources WHERE resource_id IN (?, ?)`, publicKeysVar, jwksURIVar).Scan(&count)
+
+			if count == 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotImplemented)
+				_ = json.NewEncoder(w).Encode(AuthenticatorStatusErrorResponse{
+					Status: "error",
+					Error:  "authenticator is not configured: missing public-keys or jwks-uri variable",
+				})
+				return
+			}
+		}
+
+		// All checks passed
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(AuthenticatorStatusResponse{
+			Status: "ok",
+		})
 	}
 }

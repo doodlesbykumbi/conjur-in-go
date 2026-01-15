@@ -7,30 +7,17 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"time"
 
+	"conjur-in-go/pkg/model"
 	"conjur-in-go/pkg/slosilo"
 
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
-
-// PolicyVersion represents a version of a loaded policy
-type PolicyVersion struct {
-	ResourceID   string     `gorm:"column:resource_id;primaryKey"`
-	RoleID       string     `gorm:"column:role_id"`
-	Version      int        `gorm:"column:version;primaryKey"`
-	CreatedAt    time.Time  `gorm:"column:created_at"`
-	PolicyText   string     `gorm:"column:policy_text"`
-	PolicySHA256 string     `gorm:"column:policy_sha256"`
-	FinishedAt   *time.Time `gorm:"column:finished_at"`
-	ClientIP     string     `gorm:"column:client_ip"`
-}
-
-func (PolicyVersion) TableName() string {
-	return "policy_versions"
-}
 
 // LoadResult contains the results of loading a policy
 type LoadResult struct {
@@ -129,7 +116,7 @@ func (l *Loader) Load(statements PolicyStatements) (*LoadResult, error) {
 
 	categorizeStatements(statements, &createStatements, &relationshipStatements)
 
-	var policyVersion PolicyVersion
+	var policyVersion model.PolicyVersion
 
 	err := l.db.Transaction(func(tx *gorm.DB) error {
 		// Create policy version record for tracking
@@ -142,7 +129,7 @@ func (l *Loader) Load(statements PolicyStatements) (*LoadResult, error) {
 				roleID = l.account + ":user:admin"
 			}
 
-			policyVersion = PolicyVersion{
+			policyVersion = model.PolicyVersion{
 				ResourceID:   l.policyID,
 				RoleID:       roleID,
 				CreatedAt:    time.Now(),
@@ -366,7 +353,7 @@ func (ctx *loadContext) loadUser(u User) error {
 		return err
 	}
 
-	if err := ctx.createCredentials(roleID, apiKey); err != nil {
+	if err := ctx.createCredentials(roleID, apiKey, u.RestrictedTo); err != nil {
 		return err
 	}
 
@@ -419,7 +406,7 @@ func (ctx *loadContext) loadHost(h Host) error {
 		return err
 	}
 
-	if err := ctx.createCredentials(roleID, apiKey); err != nil {
+	if err := ctx.createCredentials(roleID, apiKey, h.RestrictedTo); err != nil {
 		return err
 	}
 
@@ -435,8 +422,10 @@ func (ctx *loadContext) loadHost(h Host) error {
 func (ctx *loadContext) loadVariable(v Variable) error {
 	resourceID := ctx.qualifyID("variable", v.Id)
 
-	// Variables don't have explicit owners in the struct, use current policy
-	ownerID := ctx.currentPolicyID()
+	ownerID := ctx.resolveRef(v.Owner)
+	if ownerID == "" {
+		ownerID = ctx.currentPolicyID()
+	}
 
 	annotations := v.Annotations
 	if annotations == nil {
@@ -473,11 +462,13 @@ func (ctx *loadContext) loadGrant(g Grant) error {
 	// Handle multiple members
 	for _, member := range g.Members {
 		memberID := ctx.resolveRef(member)
-		err := ctx.db.Exec(`
-			INSERT INTO role_memberships (role_id, member_id, admin_option, ownership)
-			VALUES (?, ?, false, false)
-			ON CONFLICT DO NOTHING
-		`, roleID, memberID).Error
+		membership := model.RoleMembership{
+			RoleID:      roleID,
+			MemberID:    memberID,
+			AdminOption: false,
+			Ownership:   false,
+		}
+		err := ctx.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&membership).Error
 		if err != nil {
 			return err
 		}
@@ -493,11 +484,12 @@ func (ctx *loadContext) loadPermit(p Permit) error {
 	for _, resource := range p.Resources {
 		resourceID := ctx.resolveRef(resource)
 		for _, priv := range p.Privileges {
-			err := ctx.db.Exec(`
-				INSERT INTO permissions (privilege, resource_id, role_id)
-				VALUES (?, ?, ?)
-				ON CONFLICT DO NOTHING
-			`, priv.String(), resourceID, roleID).Error
+			perm := model.Permission{
+				Privilege:  priv.String(),
+				ResourceID: resourceID,
+				RoleID:     roleID,
+			}
+			err := ctx.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&perm).Error
 			if err != nil {
 				return err
 			}
@@ -515,10 +507,8 @@ func (ctx *loadContext) loadDeny(d Deny) error {
 	for _, resource := range d.Resources {
 		resourceID := ctx.resolveRef(resource)
 		for _, priv := range d.Privileges {
-			err := ctx.db.Exec(`
-				DELETE FROM permissions 
-				WHERE privilege = ? AND resource_id = ? AND role_id = ?
-			`, priv.String(), resourceID, roleID).Error
+			err := ctx.db.Where("privilege = ? AND resource_id = ? AND role_id = ?",
+				priv.String(), resourceID, roleID).Delete(&model.Permission{}).Error
 			if err != nil {
 				return err
 			}
@@ -537,12 +527,12 @@ func (ctx *loadContext) loadDelete(d Delete) error {
 	recordID := ctx.resolveRef(d.Record)
 
 	// Delete from resources (will cascade to permissions, annotations)
-	if err := ctx.db.Exec(`DELETE FROM resources WHERE resource_id = ?`, recordID).Error; err != nil {
+	if err := ctx.db.Where("resource_id = ?", recordID).Delete(&model.Resource{}).Error; err != nil {
 		return err
 	}
 
 	// Delete from roles (will cascade to role_memberships)
-	return ctx.db.Exec(`DELETE FROM roles WHERE role_id = ?`, recordID).Error
+	return ctx.db.Where("role_id = ?", recordID).Delete(&model.Role{}).Error
 }
 
 // loadHostFactory creates a host_factory role and resource
@@ -566,11 +556,13 @@ func (ctx *loadContext) loadHostFactory(hf HostFactory) error {
 	// Add layer memberships for the host factory
 	for _, layer := range hf.Layers {
 		layerID := ctx.resolveRef(layer)
-		err := ctx.db.Exec(`
-			INSERT INTO role_memberships (role_id, member_id, admin_option, ownership)
-			VALUES (?, ?, false, false)
-			ON CONFLICT DO NOTHING
-		`, layerID, roleID).Error
+		membership := model.RoleMembership{
+			RoleID:      layerID,
+			MemberID:    roleID,
+			AdminOption: false,
+			Ownership:   false,
+		}
+		err := ctx.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&membership).Error
 		if err != nil {
 			return err
 		}
@@ -593,28 +585,32 @@ func (ctx *loadContext) loadWebservice(ws Webservice) error {
 
 // createRole creates a role in the database
 func (ctx *loadContext) createRole(roleID string) error {
-	return ctx.db.Exec(`
-		INSERT INTO roles (role_id) VALUES (?)
-		ON CONFLICT (role_id) DO NOTHING
-	`, roleID).Error
+	role := model.Role{RoleID: roleID}
+	return ctx.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&role).Error
 }
 
 // createResource creates a resource with owner and annotations
 func (ctx *loadContext) createResource(resourceID, ownerID string, annotations map[string]interface{}) error {
-	err := ctx.db.Exec(`
-		INSERT INTO resources (resource_id, owner_id) VALUES (?, ?)
-		ON CONFLICT (resource_id) DO UPDATE SET owner_id = EXCLUDED.owner_id
-	`, resourceID, ownerID).Error
+	resource := model.Resource{ResourceID: resourceID, OwnerID: ownerID}
+	err := ctx.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "resource_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"owner_id"}),
+	}).Create(&resource).Error
 	if err != nil {
 		return err
 	}
 
 	// Add annotations
 	for name, value := range annotations {
-		err := ctx.db.Exec(`
-			INSERT INTO annotations (resource_id, name, value) VALUES (?, ?, ?)
-			ON CONFLICT (resource_id, name) DO UPDATE SET value = EXCLUDED.value
-		`, resourceID, name, fmt.Sprintf("%v", value)).Error
+		annotation := model.Annotation{
+			ResourceID: resourceID,
+			Name:       name,
+			Value:      fmt.Sprintf("%v", value),
+		}
+		err := ctx.db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "resource_id"}, {Name: "name"}},
+			DoUpdates: clause.AssignmentColumns([]string{"value"}),
+		}).Create(&annotation).Error
 		if err != nil {
 			return err
 		}
@@ -623,17 +619,59 @@ func (ctx *loadContext) createResource(resourceID, ownerID string, annotations m
 	return nil
 }
 
-// createCredentials creates credentials for a role
-func (ctx *loadContext) createCredentials(roleID, apiKey string) error {
+// createCredentials creates credentials for a role with optional CIDR restrictions
+func (ctx *loadContext) createCredentials(roleID, apiKey string, restrictedTo []string) error {
 	// Encrypt the API key before storing
 	encryptedAPIKey, err := ctx.cipher.Encrypt([]byte(roleID), []byte(apiKey))
 	if err != nil {
 		return fmt.Errorf("failed to encrypt API key: %w", err)
 	}
+
+	// Normalize CIDR values (add /32 for single IPs)
+	normalizedCIDRs := normalizeCIDRs(restrictedTo)
+
+	// Use raw SQL for credentials due to GORM issues with sql.RawBytes and OnConflict
+	// For PostgreSQL cidr[] type, we need to format as a literal array with quoted values
+	var restrictedToSQL string
+	if len(normalizedCIDRs) == 0 {
+		restrictedToSQL = "{}"
+	} else {
+		// Quote each CIDR value for PostgreSQL array literal
+		quoted := make([]string, len(normalizedCIDRs))
+		for i, cidr := range normalizedCIDRs {
+			quoted[i] = "\"" + cidr + "\""
+		}
+		restrictedToSQL = "{" + strings.Join(quoted, ",") + "}"
+	}
+
 	return ctx.db.Exec(`
-		INSERT INTO credentials (role_id, api_key) VALUES (?, ?)
-		ON CONFLICT (role_id) DO UPDATE SET api_key = EXCLUDED.api_key
-	`, roleID, encryptedAPIKey).Error
+		INSERT INTO credentials (role_id, api_key, restricted_to) VALUES (?, ?, ?::cidr[])
+		ON CONFLICT (role_id) DO UPDATE SET api_key = EXCLUDED.api_key, restricted_to = EXCLUDED.restricted_to
+	`, roleID, encryptedAPIKey, restrictedToSQL).Error
+}
+
+// normalizeCIDRs normalizes CIDR values (adds /32 for single IPv4 addresses)
+func normalizeCIDRs(cidrs []string) []string {
+	if len(cidrs) == 0 {
+		return []string{}
+	}
+	result := make([]string, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		// If it doesn't contain a slash, assume it's a single IP
+		if !strings.Contains(cidr, "/") {
+			// Check if IPv4 or IPv6
+			ip := net.ParseIP(cidr)
+			if ip != nil {
+				if ip.To4() != nil {
+					cidr = cidr + "/32"
+				} else {
+					cidr = cidr + "/128"
+				}
+			}
+		}
+		result = append(result, cidr)
+	}
+	return result
 }
 
 // generateAPIKey generates a random API key

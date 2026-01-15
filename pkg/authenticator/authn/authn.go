@@ -3,11 +3,14 @@ package authn
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"strings"
+
+	"gorm.io/gorm"
 
 	"conjur-in-go/pkg/authenticator"
 	"conjur-in-go/pkg/slosilo"
-
-	"gorm.io/gorm"
 )
 
 // Authenticator implements API key authentication
@@ -41,25 +44,29 @@ func (a *Authenticator) Authenticate(ctx context.Context, input authenticator.Au
 		roleID = input.Account + ":host:" + input.Login[5:]
 	}
 
-	// Get stored API key
-	var result struct {
-		APIKey []byte `gorm:"column:api_key"`
-	}
-	dbResult := a.db.Raw(`SELECT api_key FROM credentials WHERE role_id = ?`, roleID).Scan(&result)
-	if dbResult.Error != nil {
-		return "", errors.New("authentication failed")
-	}
-	if dbResult.RowsAffected == 0 {
-		return "", errors.New("role not found")
+	// Get stored API key and CIDR restrictions
+	var apiKey []byte
+	var restrictedToRaw string
+	row := a.db.Raw(`SELECT api_key, COALESCE(array_to_string(restricted_to, ','), '') FROM credentials WHERE role_id = ?`, roleID).Row()
+	if err := row.Scan(&apiKey, &restrictedToRaw); err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return "", errors.New("role not found")
+		}
+		return "", fmt.Errorf("authentication failed: %w", err)
 	}
 
-	if len(result.APIKey) == 0 {
+	// Parse comma-separated CIDR list
+	var restrictedTo []string
+	if restrictedToRaw != "" {
+		restrictedTo = strings.Split(restrictedToRaw, ",")
+	}
+
+	if len(apiKey) == 0 {
 		return "", errors.New("authentication failed")
 	}
-	storedAPIKey := result.APIKey
 
 	// Decrypt and compare
-	decryptedAPIKey, err := a.cipher.Decrypt([]byte(roleID), storedAPIKey)
+	decryptedAPIKey, err := a.cipher.Decrypt([]byte(roleID), apiKey)
 	if err != nil {
 		return "", errors.New("authentication failed")
 	}
@@ -68,7 +75,47 @@ func (a *Authenticator) Authenticate(ctx context.Context, input authenticator.Au
 		return "", errors.New("authentication failed")
 	}
 
+	// Check CIDR restrictions
+	if len(restrictedTo) > 0 && input.ClientIP != "" {
+		if !isOriginAllowed(input.ClientIP, restrictedTo) {
+			return "", errors.New("origin is not in the list of allowed IP addresses")
+		}
+	}
+
 	return roleID, nil
+}
+
+// isOriginAllowed checks if the client IP is allowed by CIDR restrictions
+func isOriginAllowed(clientIP string, restrictedTo []string) bool {
+	// Parse client IP (strip port if present)
+	host, _, err := net.SplitHostPort(clientIP)
+	if err != nil {
+		// No port, use as-is
+		host = clientIP
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+
+	// Check if IP is in any of the allowed CIDRs
+	for _, cidrStr := range restrictedTo {
+		_, cidrNet, err := net.ParseCIDR(cidrStr)
+		if err != nil {
+			// Try parsing as single IP
+			singleIP := net.ParseIP(cidrStr)
+			if singleIP != nil && singleIP.Equal(ip) {
+				return true
+			}
+			continue
+		}
+		if cidrNet.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Status checks if the authenticator is healthy

@@ -5,7 +5,9 @@ A Go implementation of [CyberArk Conjur](https://github.com/cyberark/conjur), de
 ## Features
 
 ### Core Functionality
-- **Authentication** - API key auth with JWT tokens, password updates, key rotation
+- **Authentication** - Pluggable authenticator architecture supporting:
+  - `authn` - API key authentication with encrypted credentials
+  - `authn-jwt` - JWT authentication with inline JWKS or provider URI
 - **Authorization** - Full RBAC using PostgreSQL stored procedures
 - **Secrets Management** - Store, retrieve, version, and batch update secrets
 - **Policy Engine** - YAML policy parser supporting all resource types
@@ -80,17 +82,21 @@ cd dev
 
 ```
 conjur-in-go/
-├── cmd/conjurctl/     # CLI application
+├── cmd/conjurctl/        # CLI application
 ├── pkg/
-│   ├── audit/         # RFC5424 syslog logging
-│   ├── model/         # Database models
-│   ├── policy/        # YAML parser & loader
+│   ├── audit/            # RFC5424 syslog logging
+│   ├── authenticator/    # Pluggable authenticator framework
+│   │   ├── authn/        # API key authenticator
+│   │   └── authn_jwt/    # JWT authenticator
+│   ├── model/            # GORM database models
+│   ├── policy/           # YAML parser & loader
 │   ├── server/
-│   │   ├── endpoints/ # HTTP handlers
-│   │   └── middleware/# JWT auth
-│   └── slosilo/       # Crypto (encryption, signing)
-├── db/migrations/     # SQL migrations (40+)
-└── dev/               # Docker dev environment
+│   │   ├── endpoints/    # HTTP handlers
+│   │   └── middleware/   # JWT token validation
+│   └── slosilo/          # Crypto (encryption, signing)
+├── db/migrations/        # SQL migrations (40+)
+├── test/integration/     # Cucumber/Godog feature tests
+└── dev/                  # Docker dev environment
 ```
 
 ## Interoperability

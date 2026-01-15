@@ -5,12 +5,14 @@ This document outlines the features we aim to implement to replicate [CyberArk C
 ## Current State
 
 The project currently has implementations of:
-- **Secrets API** - GET/POST secrets with RBAC checks (`execute`/`update` permissions) ✅
-- **Authentication** - API key authentication with Slosilo JWT token generation ✅
+- **Secrets API** - GET/POST secrets with RBAC, versioning, batch operations, expiration ✅
+- **Authentication** - Pluggable authenticator framework with `authn` and `authn-jwt` ✅
 - **Slosilo** - Go port of the cryptographic library (symmetric encryption, key signing) ✅
-- **Policy Engine** - YAML policy parser and loader ✅
-- **Database Migrations** - 13 migrations matching Ruby Conjur schema ✅
+- **Policy Engine** - YAML policy parser and loader with GORM models ✅
+- **Database Migrations** - 40+ migrations matching Ruby Conjur schema ✅
 - **CLI (conjurctl)** - Server, db migrate, account create, policy load ✅
+- **Host Factories** - Token creation, revocation, and host enrollment ✅
+- **Integration Tests** - Cucumber/Godog feature tests (20 scenarios) ✅
 
 ---
 
@@ -40,15 +42,13 @@ Using golang-migrate with SQL migration files in `db/migrations/`.
 - [x] ID parsing functions (`account`, `kind`, `identifier`)
 - [x] Version auto-increment triggers for secrets
 
-### 1.2 Account Management
-**Status: Partial**
+### 1.2 Account Management ✅
+**Status: Complete**
 
 - [x] Create account (generates signing key in slosilo keystore) - `conjurctl account create`
-- [ ] List accounts
-- [ ] Delete account
-- [ ] `GET /accounts`
-- [ ] `POST /accounts`
-- [ ] `DELETE /accounts/{id}`
+- [x] List accounts - `GET /accounts`
+- [x] Create account via API - `POST /accounts`
+- [x] Delete account - `DELETE /accounts/{id}`
 
 ### 1.3 CLI (conjurctl) ✅
 **Status: Complete**
@@ -56,11 +56,19 @@ Using golang-migrate with SQL migration files in `db/migrations/`.
 - [x] `conjurctl server` - Start HTTP server (with auto-migrations)
 - [x] `conjurctl server --no-migrate` - Start without migrations
 - [x] `conjurctl account create <name>` - Create a new account
+- [x] `conjurctl account delete <name>` - Delete an account
 - [x] `conjurctl db migrate` - Run database migrations
-- [x] `conjurctl db down [n]` - Rollback migrations
-- [x] `conjurctl db status` - Show migration status
+- [x] `conjurctl db down [n]` - Rollback migrations (Go-only)
+- [x] `conjurctl db status` - Show migration status (Go-only)
 - [x] `conjurctl policy load <account> <file>` - Load policy from file
+- [x] `conjurctl policy watch <account> <file>` - Watch file and reload policy
 - [x] `conjurctl data-key generate` - Generate encryption key
+- [x] `conjurctl role retrieve-key <role_id>` - Get role's API key
+- [x] `conjurctl role reset-password <role_id>` - Reset password and rotate API key
+- [x] `conjurctl wait` - Wait for server to be ready
+- [x] `conjurctl export` - Export data for migration
+- [x] `conjurctl configuration show` - Show configuration
+- [x] `conjurctl configuration apply` - Apply configuration
 
 ---
 
@@ -141,10 +149,10 @@ Support for standard resource kinds in policy parser:
 
 ---
 
-## Phase 4: Authentication
+## Phase 4: Authentication ✅ COMPLETE
 
-### 4.1 Core Authentication
-**Status: Partial**
+### 4.1 Core Authentication ✅
+**Status: Complete**
 
 - [x] `POST /authn/{account}/{login}/authenticate` - API key auth with JWT token
 - [x] JWT token generation and verification (Slosilo)
@@ -153,19 +161,38 @@ Support for standard resource kinds in policy parser:
 - [x] `PUT /authn/{account}/password` - Update password
 - [x] `PUT /authn/{account}/api_key` - Rotate API key
 
-### 4.2 Authenticator Framework
-**Priority: Medium**
+### 4.2 Authenticator Framework ✅
+**Status: Complete**
 
-Pluggable authenticator architecture:
-- [ ] `GET /authenticators` - List available authenticators
-- [ ] `GET /{authenticator}/{account}/status` - Authenticator health
+Pluggable authenticator architecture with registry pattern:
+- [x] `GET /authenticators` - List available authenticators
+- [x] `GET /{authenticator}/{account}/status` - Authenticator health check (basic)
+- [x] `GET /{authenticator}/{service_id}/{account}/status` - Service-specific health check (basic)
+- [x] Authenticator interface (`Name()`, `Authenticate()`)
+- [x] Default registry for authenticator lookup
+- [x] `authn` - API key authenticator
+- [x] `authn-jwt` - JWT authenticator with inline JWKS support
 
-### 4.3 External Authenticators
-**Priority: Low** (future)
+**Status endpoint gap vs Ruby:** Go does basic health checks (DB connectivity, authenticator enabled, variable exists). Ruby does comprehensive validation including: signing key fetch, issuer/audience validation, enforced claims, claim aliases, identity secrets, and user access checks.
+
+### 4.3 JWT Authenticator (authn-jwt) ✅
+**Status: Complete (basic features)**
+
+- [x] `POST /authn-jwt/{service}/{account}/authenticate` - JWT authentication
+- [x] Inline public keys via `public-keys` variable (JWKS format)
+- [x] Issuer validation via `issuer` variable
+- [x] Identity extraction via `token-app-property` variable
+- [x] Policy-based configuration (webservice + variables)
+- [x] JWKS caching with expiration
+- [ ] JWKS URI fetching (provider-uri, jwks-uri)
+- [ ] Enforced claims validation
+- [ ] Claim restrictions on hosts
+
+### 4.4 Future Authenticators
+**Priority: Low**
 
 - [ ] `authn-ldap` - LDAP authentication
 - [ ] `authn-oidc` - OpenID Connect
-- [ ] `authn-jwt` - JWT-based authentication
 - [ ] `authn-k8s` - Kubernetes authentication
 - [ ] `authn-iam` - AWS IAM authentication
 - [ ] `authn-azure` - Azure AD authentication
@@ -173,10 +200,10 @@ Pluggable authenticator architecture:
 
 ---
 
-## Phase 5: Secrets Management
+## Phase 5: Secrets Management ✅ COMPLETE
 
-### 5.1 Secrets API Enhancements
-**Status: Partial**
+### 5.1 Secrets API Enhancements ✅
+**Status: Complete**
 
 - [x] `GET /secrets/{account}/{kind}/{identifier}` - Fetch secret
 - [x] `POST /secrets/{account}/{kind}/{identifier}` - Store secret
@@ -184,7 +211,8 @@ Pluggable authenticator architecture:
 - [x] RBAC checks (`execute` for read, `update` for write)
 - [x] `GET /secrets?variable_ids=...` - Batch fetch secrets
 - [x] `POST /secrets/{account}/values` - Batch update secrets
-- [ ] Secret expiration
+- [x] Secret expiration (`expires_at` column, 404 on expired secrets)
+- [x] `POST /secrets/...?expirations` - Clear secret expiration
 
 ### 5.2 Public Keys ✅
 **Status: Complete**
@@ -210,12 +238,12 @@ Host factories allow automated host enrollment.
 
 ## Phase 7: Operational Features
 
-### 7.1 Status & Health
-**Status: Partial**
+### 7.1 Status & Health ✅
+**Status: Complete**
 
-- [x] `GET /` - Status endpoint
+- [x] `GET /` - Status endpoint (HTML and JSON)
 - [x] `GET /whoami` - Current identity
-- [x] `GET /authenticators` - List authenticators
+- [x] `GET /authenticators` - List installed/configured/enabled authenticators
 - [ ] Health checks for database, authenticators
 
 ### 7.2 Audit Logging ✅
@@ -265,8 +293,9 @@ Host factories allow automated host enrollment.
 - [ ] Efficient batch operations
 
 ### Security
-- [ ] TLS support
-- [ ] CIDR restrictions on credentials
+- [ ] TLS support (recommend handling via reverse proxy)
+- [x] CIDR restrictions on credentials (`restricted_to` on hosts/users)
+- [ ] Trusted proxies configuration (for X-Forwarded-For handling)
 - [ ] Rate limiting
 - [ ] Request validation
 

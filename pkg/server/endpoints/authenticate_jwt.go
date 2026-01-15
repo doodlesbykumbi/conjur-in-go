@@ -14,6 +14,8 @@ import (
 
 	"conjur-in-go/pkg/audit"
 	"conjur-in-go/pkg/authenticator"
+	"conjur-in-go/pkg/authenticator/authn_jwt"
+	"conjur-in-go/pkg/config"
 	"conjur-in-go/pkg/server"
 	"conjur-in-go/pkg/slosilo"
 	"conjur-in-go/pkg/slosilo/store"
@@ -68,21 +70,23 @@ func handleJWTAuthenticate(s *server.Server, keystore *store.KeyStore) http.Hand
 			return
 		}
 
-		// Get the JWT authenticator from registry
+		// Check if this authenticator is enabled via config
 		authName := "authn-jwt/" + serviceID
-		auth, ok := authenticator.DefaultRegistry.Get(authName)
-		if !ok {
-			// Try without service ID
-			auth, ok = authenticator.DefaultRegistry.Get("authn-jwt")
-			if !ok {
-				http.Error(writer, "JWT authenticator not configured", http.StatusNotFound)
-				return
-			}
+		cfg := config.Get()
+		if !cfg.IsAuthenticatorEnabled(authName) {
+			http.Error(writer, "JWT authenticator not enabled", http.StatusForbidden)
+			return
 		}
 
-		// Check if enabled
-		if !authenticator.DefaultRegistry.IsEnabled(authName) && !authenticator.DefaultRegistry.IsEnabled("authn-jwt") {
-			http.Error(writer, "JWT authenticator not enabled", http.StatusForbidden)
+		// Create JWT authenticator on-demand - it reads config from DB
+		auth := authn_jwt.NewFromDB(s.DB, s.Cipher, serviceID, account)
+
+		// Check if the authenticator is actually configured (has webservice in policy)
+		// The webservice can be created with or without trailing slash depending on policy format
+		var count int64
+		webservicePattern := account + ":webservice:conjur/authn-jwt/" + serviceID + "%"
+		if err := s.DB.Raw(`SELECT COUNT(*) FROM resources WHERE resource_id LIKE ?`, webservicePattern).Scan(&count).Error; err != nil || count == 0 {
+			http.Error(writer, "JWT authenticator not configured", http.StatusNotFound)
 			return
 		}
 
@@ -139,9 +143,14 @@ func handleJWTAuthenticate(s *server.Server, keystore *store.KeyStore) http.Hand
 			}
 		}
 
-		// Generate Conjur token
+		// Generate Conjur token with TTL from config
+		// JWT authenticated identities are typically hosts
+		now := time.Now()
+		tokenTTL := cfg.HostTokenTTL()
+
 		newclaimsMap := map[string]interface{}{
-			"iat": time.Now().Unix(),
+			"iat": now.Unix(),
+			"exp": now.Add(tokenTTL).Unix(),
 			"sub": tokenLogin,
 		}
 		key, err := keystore.ByAccount(account)

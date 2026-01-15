@@ -34,6 +34,7 @@ type Annotations map[string]interface{}
 type Variable struct {
 	Resource    `yaml:"-"`
 	Id          string                 `yaml:"id"`
+	Owner       ResourceRef            `yaml:"owner,omitempty"`
 	Annotations map[string]interface{} `yaml:"annotations,omitempty"`
 	Kind        string                 `yaml:"kind,omitempty"`
 }
@@ -49,10 +50,11 @@ func (v *Variable) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type User struct {
-	Resource    `yaml:"-"`
-	Id          string                 `yaml:"id"`
-	Owner       ResourceRef            `yaml:"owner,omitempty"`
-	Annotations map[string]interface{} `yaml:"annotations,omitempty"`
+	Resource     `yaml:"-"`
+	Id           string                 `yaml:"id"`
+	Owner        ResourceRef            `yaml:"owner,omitempty"`
+	Annotations  map[string]interface{} `yaml:"annotations,omitempty"`
+	RestrictedTo []string               `yaml:"restricted_to,omitempty"`
 }
 
 // UnmarshalYAML for User handles both scalar (just ID) and mapping forms
@@ -88,11 +90,12 @@ type Grant struct {
 }
 
 type Host struct {
-	Resource    `yaml:"-"`
-	Id          string                 `yaml:"id,omitempty"`
-	Owner       ResourceRef            `yaml:"owner,omitempty"`
-	Body        PolicyStatements       `yaml:"body,omitempty"`
-	Annotations map[string]interface{} `yaml:"annotations,omitempty"`
+	Resource     `yaml:"-"`
+	Id           string                 `yaml:"id,omitempty"`
+	Owner        ResourceRef            `yaml:"owner,omitempty"`
+	Body         PolicyStatements       `yaml:"body,omitempty"`
+	Annotations  map[string]interface{} `yaml:"annotations,omitempty"`
+	RestrictedTo []string               `yaml:"restricted_to,omitempty"`
 }
 
 // UnmarshalYAML for Host handles both scalar (just ID) and mapping forms
@@ -423,6 +426,6 @@ func (hf HostFactory) MarshalYAML() (interface{}, error) {
 	return MarshalYAMLWithTag(hf, KindHostFactory)
 }
 
-func (ws Webservice) MarshalYAML() (interface{}, error) {
-	return MarshalYAMLWithTag(ws, KindWebservice)
+func (w Webservice) MarshalYAML() (interface{}, error) {
+	return MarshalYAMLWithTag(w, KindWebservice)
 }

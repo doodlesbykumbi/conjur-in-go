@@ -1,6 +1,7 @@
 package authenticator
 
 import (
+	"conjur-in-go/pkg/config"
 	"context"
 	"fmt"
 	"sync"
@@ -77,10 +78,18 @@ func (r *Registry) Get(name string) (Authenticator, bool) {
 }
 
 // IsEnabled checks if an authenticator is enabled
+// Checks both the registry's enabled map and the config file settings
 func (r *Registry) IsEnabled(name string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.enabled[name]
+
+	// Check registry's enabled map first
+	if r.enabled[name] {
+		return true
+	}
+
+	// Also check config file settings
+	return config.Get().IsAuthenticatorEnabled(name)
 }
 
 // Installed returns all installed authenticator names

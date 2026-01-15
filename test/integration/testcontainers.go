@@ -220,6 +220,9 @@ func startBinary(binaryPath, dbURL string, dataKey []byte, port string) (*exec.C
 	cmd.Env = append(os.Environ(),
 		"DATABASE_URL="+dbURL,
 		"CONJUR_DATA_KEY="+base64.StdEncoding.EncodeToString(dataKey),
+		// Enable JWT authenticator for integration tests
+		"CONJUR_AUTHENTICATORS=authn,authn-jwt/raw",
+		"CONJUR_ACCOUNT=cucumber",
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -240,7 +243,7 @@ func waitForServer(serverURL string, timeout time.Duration) error {
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(serverURL + "/")
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}

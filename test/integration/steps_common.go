@@ -52,8 +52,6 @@ func (s *StepsContext) RegisterSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the response body should be "([^"]*)"$`, s.theResponseBodyShouldBe)
 
 	// Variable/Secret steps
-	sc.Step(`^a variable "([^"]*)" exists in account "([^"]*)"$`, s.aVariableExistsInAccount)
-	sc.Step(`^I have "([^"]*)" permission on "([^"]*)"$`, s.iHavePermissionOn)
 	sc.Step(`^I store the value "([^"]*)" in variable "([^"]*)"$`, s.iStoreValueInVariable)
 	sc.Step(`^I retrieve the variable "([^"]*)"$`, s.iRetrieveVariable)
 	sc.Step(`^the variable "([^"]*)" has value "([^"]*)"$`, s.theVariableHasValue)
@@ -92,6 +90,18 @@ func (s *StepsContext) RegisterSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the response should contain a Conjur access token$`, s.theResponseShouldContainConjurAccessToken)
 	sc.Step(`^a JWT authenticator "([^"]*)" is configured but not enabled$`, s.aJWTAuthenticatorIsConfiguredButNotEnabled)
 	sc.Step(`^I authenticate via authn-jwt with service "([^"]*)"$`, s.iAuthenticateViaAuthnJWTWithService)
+
+	// Account management steps
+	sc.Step(`^I request the accounts list$`, s.iRequestTheAccountsList)
+	sc.Step(`^I create an account "([^"]*)"$`, s.iCreateAnAccount)
+	sc.Step(`^I delete the account "([^"]*)"$`, s.iDeleteTheAccount)
+	sc.Step(`^the response should contain account "([^"]*)"$`, s.theResponseShouldContainAccount)
+	sc.Step(`^the response should not contain account "([^"]*)"$`, s.theResponseShouldNotContainAccount)
+	sc.Step(`^the response should contain an API key$`, s.theResponseShouldContainAnAPIKey)
+
+	// Health check steps
+	sc.Step(`^I check the status of "([^"]*)" for account "([^"]*)"$`, s.iCheckTheStatusOfForAccount)
+	sc.Step(`^the response should indicate status "([^"]*)"$`, s.theResponseShouldIndicateStatus)
 }
 
 // Background steps
@@ -180,6 +190,11 @@ func (s *StepsContext) iAuthenticateWithCorrectAPIKey(login, account string) err
 	if strings.HasPrefix(login, "host/") {
 		hostName := strings.TrimPrefix(login, "host/")
 		apiKey = s.hostAPIKeys[hostName]
+	} else if login != "admin" {
+		// Check if this is a user created via policy
+		if key, ok := s.hostAPIKeys[login]; ok {
+			apiKey = key
+		}
 	}
 	return s.iAuthenticateWithAPIKey(login, account, apiKey)
 }
@@ -284,33 +299,6 @@ func (s *StepsContext) theResponseBodyShouldBe(expected string) error {
 
 // Variable/Secret steps
 
-func (s *StepsContext) aVariableExistsInAccount(variableId, account string) error {
-	resourceId := account + ":variable:" + variableId
-
-	// For "restricted" variables, use a different owner to test permission denial
-	ownerRoleId := account + ":user:admin"
-	if strings.Contains(variableId, "restricted") {
-		// Create a separate owner role for restricted resources
-		otherOwner := account + ":user:other-owner"
-		_ = s.tc.DB.Exec(`INSERT INTO roles (role_id) VALUES (?) ON CONFLICT DO NOTHING`, otherOwner)
-		_ = s.tc.DB.Exec(`INSERT INTO resources (resource_id, owner_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, otherOwner, otherOwner)
-		ownerRoleId = otherOwner
-	}
-
-	return s.tc.DB.Exec(`
-		INSERT INTO resources (resource_id, owner_id) VALUES (?, ?)
-		ON CONFLICT DO NOTHING
-	`, resourceId, ownerRoleId).Error
-}
-
-func (s *StepsContext) iHavePermissionOn(privilege, resourceId string) error {
-	roleId := s.account + ":user:admin"
-	return s.tc.DB.Exec(`
-		INSERT INTO permissions (privilege, resource_id, role_id) VALUES (?, ?, ?)
-		ON CONFLICT DO NOTHING
-	`, privilege, resourceId, roleId).Error
-}
-
 func (s *StepsContext) iStoreValueInVariable(value, variableId string) error {
 	url := fmt.Sprintf("%s/secrets/%s/variable/%s", s.tc.ServerURL, s.account, variableId)
 	req, err := http.NewRequest("POST", url, strings.NewReader(value))
@@ -348,15 +336,25 @@ func (s *StepsContext) iRetrieveVariable(variableId string) error {
 }
 
 func (s *StepsContext) theVariableHasValue(variableId, value string) error {
-	resourceId := s.account + ":variable:" + variableId
-	encryptedValue, err := s.tc.Cipher.Encrypt([]byte(resourceId), []byte(value))
+	// Use the secrets API to store the value
+	url := fmt.Sprintf("%s/secrets/%s/variable/%s", s.tc.ServerURL, s.account, variableId)
+	req, err := http.NewRequest("POST", url, strings.NewReader(value))
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Authorization", `Token token="`+s.authToken+`"`)
 
-	return s.tc.DB.Exec(`
-		INSERT INTO secrets (resource_id, value) VALUES (?, ?)
-	`, resourceId, encryptedValue).Error
+	resp, err := s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to set variable value: %d %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 func (s *StepsContext) iBatchRetrieveVariables(variableIds string) error {
@@ -661,4 +659,141 @@ func (s *StepsContext) iExpireTheVariable(variableId string) error {
 	s.responseBody, err = io.ReadAll(s.response.Body)
 	_ = s.response.Body.Close()
 	return err
+}
+
+// Account management steps
+
+func (s *StepsContext) iRequestTheAccountsList() error {
+	url := fmt.Sprintf("%s/accounts", s.tc.ServerURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) iCreateAnAccount(accountName string) error {
+	url := fmt.Sprintf("%s/accounts?id=%s", s.tc.ServerURL, accountName)
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		return err
+	}
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) iDeleteTheAccount(accountName string) error {
+	url := fmt.Sprintf("%s/accounts/%s", s.tc.ServerURL, accountName)
+	req, err := http.NewRequest("DELETE", url, nil)
+	if err != nil {
+		return err
+	}
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) theResponseShouldContainAccount(accountName string) error {
+	var accounts []string
+	if err := json.Unmarshal(s.responseBody, &accounts); err != nil {
+		return fmt.Errorf("failed to parse accounts response: %w", err)
+	}
+
+	for _, acc := range accounts {
+		if acc == accountName {
+			return nil
+		}
+	}
+	return fmt.Errorf("account %q not found in response: %v", accountName, accounts)
+}
+
+func (s *StepsContext) theResponseShouldNotContainAccount(accountName string) error {
+	var accounts []string
+	if err := json.Unmarshal(s.responseBody, &accounts); err != nil {
+		return fmt.Errorf("failed to parse accounts response: %w", err)
+	}
+
+	for _, acc := range accounts {
+		if acc == accountName {
+			return fmt.Errorf("account %q should not be in response but was found: %v", accountName, accounts)
+		}
+	}
+	return nil
+}
+
+func (s *StepsContext) theResponseShouldContainAnAPIKey() error {
+	var response struct {
+		ID     string `json:"id"`
+		APIKey string `json:"api_key"`
+	}
+	if err := json.Unmarshal(s.responseBody, &response); err != nil {
+		return fmt.Errorf("failed to parse account create response: %w", err)
+	}
+
+	if response.APIKey == "" {
+		return fmt.Errorf("response does not contain an API key: %s", string(s.responseBody))
+	}
+	return nil
+}
+
+// Health check steps
+
+func (s *StepsContext) iCheckTheStatusOfForAccount(authenticator, account string) error {
+	// Handle authenticator with service ID (e.g., "authn-jwt/test-service")
+	var url string
+	if strings.Contains(authenticator, "/") {
+		parts := strings.SplitN(authenticator, "/", 2)
+		url = fmt.Sprintf("%s/%s/%s/%s/status", s.tc.ServerURL, parts[0], parts[1], account)
+	} else {
+		url = fmt.Sprintf("%s/%s/%s/status", s.tc.ServerURL, authenticator, account)
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) theResponseShouldIndicateStatus(expectedStatus string) error {
+	var response struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(s.responseBody, &response); err != nil {
+		return fmt.Errorf("failed to parse status response: %w", err)
+	}
+
+	if response.Status != expectedStatus {
+		return fmt.Errorf("expected status %q, got %q (body: %s)", expectedStatus, response.Status, string(s.responseBody))
+	}
+	return nil
 }

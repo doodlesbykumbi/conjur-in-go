@@ -5,17 +5,54 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"time"
 
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"conjur-in-go/pkg/slosilo"
 )
 
 type Credential struct {
-	RoleId    string
-	ApiKey    sql.RawBytes
-	UpdatedAt time.Time
+	RoleId       string
+	ApiKey       sql.RawBytes
+	RestrictedTo pq.StringArray `gorm:"column:restricted_to;type:cidr[]"`
+	UpdatedAt    time.Time
+}
+
+// IsOriginAllowed checks if the given IP address is allowed by CIDR restrictions
+func (c *Credential) IsOriginAllowed(clientIP string) bool {
+	// If no restrictions, allow all
+	if len(c.RestrictedTo) == 0 {
+		return true
+	}
+
+	// Parse client IP (strip port if present)
+	host, _, err := net.SplitHostPort(clientIP)
+	if err != nil {
+		// No port, use as-is
+		host = clientIP
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+
+	// Check if IP is in any of the allowed CIDRs
+	for _, cidrStr := range c.RestrictedTo {
+		_, cidrNet, err := net.ParseCIDR(cidrStr)
+		if err != nil {
+			// Try parsing as single IP (e.g., "192.168.1.1/32")
+			cidrNet = &net.IPNet{IP: net.ParseIP(cidrStr), Mask: net.CIDRMask(32, 32)}
+		}
+		if cidrNet != nil && cidrNet.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (c Credential) TableName() string {

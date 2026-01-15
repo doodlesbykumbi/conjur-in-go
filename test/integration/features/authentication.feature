@@ -29,3 +29,26 @@ Feature: Authentication
     When I authenticate as "host/myapp" in account "myorg" with the correct API key
     Then the response status should be 200
     And I should receive a valid JWT token
+
+  Scenario: CIDR restriction allows matching IP
+    Given I am authenticated as "admin" in account "myorg"
+    And I load the following policy to "root":
+      """
+      - !host
+        id: restricted-host
+        restricted_to: [ "127.0.0.1" ]
+      """
+    When I authenticate as "host/restricted-host" in account "myorg" with the correct API key
+    Then the response status should be 200
+    And I should receive a valid JWT token
+
+  Scenario: CIDR restriction blocks non-matching IP
+    Given I am authenticated as "admin" in account "myorg"
+    And I load the following policy to "root":
+      """
+      - !host
+        id: blocked-host
+        restricted_to: [ "10.0.0.0/8" ]
+      """
+    When I authenticate as "host/blocked-host" in account "myorg" with the correct API key
+    Then the response status should be 401

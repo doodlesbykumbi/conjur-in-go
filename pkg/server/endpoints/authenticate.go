@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"conjur-in-go/pkg/audit"
+	"conjur-in-go/pkg/config"
 	"conjur-in-go/pkg/model"
 	"conjur-in-go/pkg/server"
 	"conjur-in-go/pkg/slosilo"
@@ -298,6 +299,19 @@ func RegisterAuthenticateEndpoint(server *server.Server) {
 				return
 			}
 
+			// Check CIDR restrictions
+			if !credential.IsOriginAllowed(clientIP) {
+				audit.Log(audit.AuthenticateEvent{
+					RoleID:            roleId,
+					ClientIP:          clientIP,
+					AuthenticatorName: "authn",
+					Success:           false,
+					ErrorMessage:      "origin is not in the list of allowed IP addresses",
+				})
+				writer.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+
 			// Log successful authentication
 			audit.Log(audit.AuthenticateEvent{
 				RoleID:            roleId,
@@ -306,8 +320,19 @@ func RegisterAuthenticateEndpoint(server *server.Server) {
 				Success:           true,
 			})
 
+			// Get token TTL from config based on role type
+			cfg := config.Get()
+			var tokenTTL time.Duration
+			if strings.HasPrefix(login, "host/") {
+				tokenTTL = cfg.HostTokenTTL()
+			} else {
+				tokenTTL = cfg.UserTokenTTL()
+			}
+
+			now := time.Now()
 			newclaimsMap := map[string]interface{}{
-				"iat": time.Now().Unix(),
+				"iat": now.Unix(),
+				"exp": now.Add(tokenTTL).Unix(),
 				"sub": login,
 			}
 			key, err := keystore.ByAccount(account)
