@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/cucumber/godog"
 )
@@ -68,6 +69,29 @@ func (s *StepsContext) RegisterSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^group "([^"]*)" should exist in account "([^"]*)"$`, s.groupShouldExistInAccount)
 	sc.Step(`^variable "([^"]*)" should exist in account "([^"]*)"$`, s.variableShouldExistInAccount)
 	sc.Step(`^the response should indicate dry-run mode$`, s.theResponseShouldIndicateDryRunMode)
+
+	// Status/Info steps
+	sc.Step(`^I request the status page$`, s.iRequestTheStatusPage)
+	sc.Step(`^I request the status page with JSON format$`, s.iRequestTheStatusPageWithJSONFormat)
+	sc.Step(`^I request the authenticators list$`, s.iRequestTheAuthenticatorsList)
+	sc.Step(`^the response content type should be "([^"]*)"$`, s.theResponseContentTypeShouldBe)
+	sc.Step(`^the response body should contain "([^"]*)"$`, s.theResponseBodyShouldContain)
+	sc.Step(`^the response should contain authenticator "([^"]*)"$`, s.theResponseShouldContainAuthenticator)
+	sc.Step(`^the response should contain version info$`, s.theResponseShouldContainVersionInfo)
+
+	// Expiration steps
+	sc.Step(`^the variable "([^"]*)" has expired$`, s.theVariableHasExpired)
+	sc.Step(`^I expire the variable "([^"]*)"$`, s.iExpireTheVariable)
+
+	// JWT Authentication steps
+	sc.Step(`^I set authn-jwt "([^"]*)" variable "([^"]*)" with test JWKS$`, s.iSetAuthnJWTVariableWithTestJWKS)
+	sc.Step(`^I set authn-jwt "([^"]*)" variable "([^"]*)" to "([^"]*)"$`, s.iSetAuthnJWTVariableTo)
+	sc.Step(`^the authn-jwt "([^"]*)" authenticator is enabled$`, s.theAuthnJWTAuthenticatorIsEnabled)
+	sc.Step(`^I authenticate via authn-jwt with a valid JWT token for host "([^"]*)"$`, s.iAuthenticateViaAuthnJWTWithValidTokenForHost)
+	sc.Step(`^I authenticate via authn-jwt with an invalid JWT token for host "([^"]*)"$`, s.iAuthenticateViaAuthnJWTWithInvalidTokenForHost)
+	sc.Step(`^the response should contain a Conjur access token$`, s.theResponseShouldContainConjurAccessToken)
+	sc.Step(`^a JWT authenticator "([^"]*)" is configured but not enabled$`, s.aJWTAuthenticatorIsConfiguredButNotEnabled)
+	sc.Step(`^I authenticate via authn-jwt with service "([^"]*)"$`, s.iAuthenticateViaAuthnJWTWithService)
 }
 
 // Background steps
@@ -387,6 +411,30 @@ func (s *StepsContext) iLoadPolicyTo(policyId string, policyYAML *godog.DocStrin
 
 	s.responseBody, err = io.ReadAll(s.response.Body)
 	_ = s.response.Body.Close()
+
+	// Check for successful policy load
+	if s.response.StatusCode != http.StatusCreated && s.response.StatusCode != http.StatusOK {
+		return fmt.Errorf("policy load failed with status %d: %s", s.response.StatusCode, string(s.responseBody))
+	}
+
+	// Parse response to capture created roles' API keys
+	var policyResponse struct {
+		CreatedRoles map[string]struct {
+			ID     string `json:"id"`
+			APIKey string `json:"api_key"`
+		} `json:"created_roles"`
+	}
+	if err := json.Unmarshal(s.responseBody, &policyResponse); err == nil {
+		for roleID, role := range policyResponse.CreatedRoles {
+			// Extract role name from roleID key (e.g., "myorg:host:myapp" -> "myapp")
+			parts := strings.Split(roleID, ":")
+			if len(parts) >= 3 {
+				roleName := parts[2]
+				s.hostAPIKeys[roleName] = role.APIKey
+			}
+		}
+	}
+
 	return err
 }
 
@@ -485,4 +533,132 @@ func (s *StepsContext) theResponseShouldIndicateDryRunMode() error {
 		return fmt.Errorf("expected dry_run=true in response")
 	}
 	return nil
+}
+
+// Status/Info steps
+
+func (s *StepsContext) iRequestTheStatusPage() error {
+	url := fmt.Sprintf("%s/", s.tc.ServerURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) iRequestTheAuthenticatorsList() error {
+	url := fmt.Sprintf("%s/authenticators", s.tc.ServerURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) theResponseContentTypeShouldBe(expectedType string) error {
+	contentType := s.response.Header.Get("Content-Type")
+	if !strings.Contains(contentType, expectedType) {
+		return fmt.Errorf("expected content type %q, got %q", expectedType, contentType)
+	}
+	return nil
+}
+
+func (s *StepsContext) theResponseBodyShouldContain(expected string) error {
+	if !strings.Contains(string(s.responseBody), expected) {
+		return fmt.Errorf("expected body to contain %q, got %q", expected, string(s.responseBody))
+	}
+	return nil
+}
+
+func (s *StepsContext) theResponseShouldContainAuthenticator(authenticator string) error {
+	var result map[string]interface{}
+	if err := json.Unmarshal(s.responseBody, &result); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	installed, ok := result["installed"].([]interface{})
+	if !ok {
+		return fmt.Errorf("no 'installed' field in response")
+	}
+
+	for _, auth := range installed {
+		if auth.(string) == authenticator {
+			return nil
+		}
+	}
+	return fmt.Errorf("authenticator %q not found in installed list", authenticator)
+}
+
+func (s *StepsContext) iRequestTheStatusPageWithJSONFormat() error {
+	url := fmt.Sprintf("%s/?format=json", s.tc.ServerURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) theResponseShouldContainVersionInfo() error {
+	var result map[string]interface{}
+	if err := json.Unmarshal(s.responseBody, &result); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if _, ok := result["version"]; !ok {
+		return fmt.Errorf("no 'version' field in response")
+	}
+	if _, ok := result["api_version"]; !ok {
+		return fmt.Errorf("no 'api_version' field in response")
+	}
+	return nil
+}
+
+// Expiration steps
+
+func (s *StepsContext) theVariableHasExpired(variableId string) error {
+	resourceId := s.account + ":variable:" + variableId
+	pastTime := time.Now().Add(-1 * time.Hour)
+	return s.tc.DB.Exec(`UPDATE secrets SET expires_at = ? WHERE resource_id = ?`, pastTime, resourceId).Error
+}
+
+func (s *StepsContext) iExpireTheVariable(variableId string) error {
+	url := fmt.Sprintf("%s/secrets/%s/variable/%s?expirations", s.tc.ServerURL, s.account, variableId)
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", `Token token="`+s.authToken+`"`)
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
 }

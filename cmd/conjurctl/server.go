@@ -11,6 +11,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	"conjur-in-go/pkg/authenticator"
+	"conjur-in-go/pkg/authenticator/authn"
 	"conjur-in-go/pkg/server"
 	"conjur-in-go/pkg/server/endpoints"
 	"conjur-in-go/pkg/slosilo"
@@ -84,6 +86,11 @@ By default, database migrations are run on startup. Use --no-migrate to skip.`,
 		db = db.WithContext(ctx)
 
 		keystore := store.NewKeyStore(db)
+
+		// Register authenticators
+		authnAuth := authn.New(db, cipher)
+		authenticator.DefaultRegistry.Register(authnAuth)
+		_ = authenticator.DefaultRegistry.Enable("authn")
 
 		host, _ := cmd.Flags().GetString("bind-address")
 		port, _ := cmd.Flags().GetString("port")

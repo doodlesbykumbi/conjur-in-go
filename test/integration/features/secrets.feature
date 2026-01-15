@@ -40,3 +40,24 @@ Feature: Secrets Management
     Then the response status should be 200
     And the response should contain secret "myorg:variable:app/db-host" with value "localhost"
     And the response should contain secret "myorg:variable:app/db-port" with value "5432"
+
+  Scenario: Expired secret returns 404
+    Given a variable "rotating/secret" exists in account "myorg"
+    And I have "execute" permission on "myorg:variable:rotating/secret"
+    And I have "update" permission on "myorg:variable:rotating/secret"
+    And the variable "rotating/secret" has value "rotating-value"
+    And the variable "rotating/secret" has expired
+    When I retrieve the variable "rotating/secret"
+    Then the response status should be 404
+
+  Scenario: Expire endpoint clears expiration
+    Given a variable "expirable/secret" exists in account "myorg"
+    And I have "execute" permission on "myorg:variable:expirable/secret"
+    And I have "update" permission on "myorg:variable:expirable/secret"
+    And the variable "expirable/secret" has value "expirable-value"
+    And the variable "expirable/secret" has expired
+    When I expire the variable "expirable/secret"
+    Then the response status should be 201
+    When I retrieve the variable "expirable/secret"
+    Then the response status should be 200
+    And the response body should be "expirable-value"

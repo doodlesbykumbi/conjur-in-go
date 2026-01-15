@@ -95,6 +95,16 @@ type Host struct {
 	Annotations map[string]interface{} `yaml:"annotations,omitempty"`
 }
 
+// UnmarshalYAML for Host handles both scalar (just ID) and mapping forms
+func (h *Host) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		h.Id = value.Value
+		return nil
+	}
+	type hostAlias Host
+	return value.Decode((*hostAlias)(h))
+}
+
 type Delete struct {
 	Resource `yaml:"-"`
 	Record   ResourceRef `yaml:"record"`
@@ -127,6 +137,16 @@ type Webservice struct {
 	Id          string                 `yaml:"id"`
 	Annotations map[string]interface{} `yaml:"annotations,omitempty"`
 	Owner       ResourceRef            `yaml:"owner,omitempty"`
+}
+
+// UnmarshalYAML for Webservice handles both scalar (just ID) and mapping forms
+func (w *Webservice) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		w.Id = value.Value
+		return nil
+	}
+	type webserviceAlias Webservice
+	return value.Decode((*webserviceAlias)(w))
 }
 
 // UnmarshalYAML for Grant handles both "member" and "members" fields

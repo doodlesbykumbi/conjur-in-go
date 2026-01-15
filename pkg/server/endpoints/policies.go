@@ -172,7 +172,7 @@ func handlePolicyLoad(s *server.Server) http.HandlerFunc {
 		dryRun := r.URL.Query().Get("dry_run") == "true"
 
 		// Load policy using the shared loader with versioning info
-		loader := policy.NewLoader(s.DB, account).
+		loader := policy.NewLoader(s.DB, s.Cipher, account).
 			WithPolicyID(policyID).
 			WithRoleID(roleID).
 			WithClientIP(clientIP).

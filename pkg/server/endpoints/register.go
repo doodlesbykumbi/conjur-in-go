@@ -5,6 +5,7 @@ import "conjur-in-go/pkg/server"
 // RegisterAll registers all API endpoints on the server
 func RegisterAll(srv *server.Server) {
 	RegisterAuthenticateEndpoint(srv)
+	RegisterJWTAuthenticateEndpoint(srv)
 	RegisterSecretsEndpoints(srv)
 	RegisterPoliciesEndpoints(srv)
 	RegisterResourcesEndpoints(srv)

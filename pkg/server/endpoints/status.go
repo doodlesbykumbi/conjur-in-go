@@ -4,9 +4,18 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"sort"
+	"strings"
 
+	"conjur-in-go/pkg/authenticator"
 	"conjur-in-go/pkg/server"
 )
+
+// InfoResponse represents the response from / when JSON is requested
+type InfoResponse struct {
+	Version    string `json:"version"`
+	APIVersion string `json:"api_version"`
+}
 
 // AuthenticatorsResponse represents the response from /authenticators
 type AuthenticatorsResponse struct {
@@ -43,6 +52,19 @@ func handleStatus() http.HandlerFunc {
 		apiVersion := os.Getenv("API_VERSION")
 		if apiVersion == "" {
 			apiVersion = "5.0.0"
+		}
+
+		// Check if JSON is requested via Accept header or format query param
+		accept := r.Header.Get("Accept")
+		format := r.URL.Query().Get("format")
+		if format == "json" || strings.Contains(accept, "application/json") {
+			response := InfoResponse{
+				Version:    version,
+				APIVersion: apiVersion,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(response)
+			return
 		}
 
 		// Return HTML status page like Ruby Conjur
@@ -83,11 +105,20 @@ func handleStatus() http.HandlerFunc {
 
 func handleAuthenticators() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// For now, we only support the basic authn authenticator
+		registry := authenticator.DefaultRegistry
+
+		installed := registry.Installed()
+		enabled := registry.Enabled()
+
+		// Sort for consistent output
+		sort.Strings(installed)
+		sort.Strings(enabled)
+
+		// For now, configured = enabled (in future, read from DB)
 		response := AuthenticatorsResponse{
-			Installed:  []string{"authn"},
-			Configured: []string{"authn"},
-			Enabled:    []string{"authn"},
+			Installed:  installed,
+			Configured: enabled,
+			Enabled:    enabled,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

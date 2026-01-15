@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"conjur-in-go/pkg/slosilo"
+
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
@@ -45,6 +47,7 @@ type RoleCredentials struct {
 // Loader handles loading policy into the database
 type Loader struct {
 	db              *gorm.DB
+	cipher          slosilo.SymmetricCipher
 	account         string
 	policyID        string // The target policy resource ID (e.g., "myorg:policy:root")
 	roleID          string // The role loading the policy
@@ -55,9 +58,10 @@ type Loader struct {
 }
 
 // NewLoader creates a new policy loader
-func NewLoader(db *gorm.DB, account string) *Loader {
+func NewLoader(db *gorm.DB, cipher slosilo.SymmetricCipher, account string) *Loader {
 	return &Loader{
 		db:       db,
+		cipher:   cipher,
 		account:  account,
 		policyID: account + ":policy:root", // Default to root policy
 		roleID:   account + ":user:admin",  // Default to admin
@@ -158,6 +162,7 @@ func (l *Loader) Load(statements PolicyStatements) (*LoadResult, error) {
 
 		ctx := &loadContext{
 			db:              tx,
+			cipher:          l.cipher,
 			account:         l.account,
 			createdRoles:    result.CreatedRoles,
 			deletePermitted: l.deletePermitted,
@@ -223,6 +228,7 @@ func categorizeStatements(statements PolicyStatements, creates *[]Resource, rela
 // loadContext holds state during policy loading
 type loadContext struct {
 	db              *gorm.DB
+	cipher          slosilo.SymmetricCipher
 	account         string
 	policyPath      []string // stack of policy IDs for nested policies
 	createdRoles    map[string]RoleCredentials
@@ -619,10 +625,15 @@ func (ctx *loadContext) createResource(resourceID, ownerID string, annotations m
 
 // createCredentials creates credentials for a role
 func (ctx *loadContext) createCredentials(roleID, apiKey string) error {
+	// Encrypt the API key before storing
+	encryptedAPIKey, err := ctx.cipher.Encrypt([]byte(roleID), []byte(apiKey))
+	if err != nil {
+		return fmt.Errorf("failed to encrypt API key: %w", err)
+	}
 	return ctx.db.Exec(`
 		INSERT INTO credentials (role_id, api_key) VALUES (?, ?)
 		ON CONFLICT (role_id) DO UPDATE SET api_key = EXCLUDED.api_key
-	`, roleID, []byte(apiKey)).Error
+	`, roleID, encryptedAPIKey).Error
 }
 
 // generateAPIKey generates a random API key

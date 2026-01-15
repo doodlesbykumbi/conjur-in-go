@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"conjur-in-go/pkg/policy"
+	"conjur-in-go/pkg/slosilo"
 )
 
 // policyLoadCmd represents the policy load command
@@ -63,6 +65,20 @@ func loadPolicyFile(account, filename string) (*policy.LoadResult, error) {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
+	// Load data key for encryption
+	dataKeyB64 := os.Getenv("CONJUR_DATA_KEY")
+	if dataKeyB64 == "" {
+		return nil, fmt.Errorf("CONJUR_DATA_KEY environment variable is required")
+	}
+	dataKey, err := base64.StdEncoding.DecodeString(dataKeyB64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode CONJUR_DATA_KEY: %w", err)
+	}
+	cipher, err := slosilo.NewSymmetric(dataKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+
 	// Open policy file
 	file, err := os.Open(filename)
 	if err != nil {
@@ -71,7 +87,7 @@ func loadPolicyFile(account, filename string) (*policy.LoadResult, error) {
 	defer func() { _ = file.Close() }()
 
 	// Load policy
-	loader := policy.NewLoader(db, account)
+	loader := policy.NewLoader(db, cipher, account)
 	result, err := loader.LoadFromReader(file)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load policy: %w", err)

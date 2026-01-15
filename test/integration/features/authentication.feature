@@ -21,7 +21,11 @@ Feature: Authentication
     Then the response status should be 401
 
   Scenario: Host authentication
-    Given a host "myapp" exists in account "myorg"
+    Given I am authenticated as "admin" in account "myorg"
+    And I load the following policy to "root":
+      """
+      - !host myapp
+      """
     When I authenticate as "host/myapp" in account "myorg" with the correct API key
     Then the response status should be 200
     And I should receive a valid JWT token

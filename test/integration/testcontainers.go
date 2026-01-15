@@ -19,7 +19,12 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"conjur-in-go/pkg/authenticator"
+	"conjur-in-go/pkg/authenticator/authn"
+	"conjur-in-go/pkg/server"
+	"conjur-in-go/pkg/server/endpoints"
 	"conjur-in-go/pkg/slosilo"
+	"conjur-in-go/pkg/slosilo/store"
 )
 
 // TestContext holds all the resources needed for integration tests
@@ -33,11 +38,13 @@ type TestContext struct {
 	HTTPClient    *http.Client
 	Cancel        context.CancelFunc
 	ServerProcess *exec.Cmd
+	InlineServer  *server.Server // For inline mode
 }
 
-// NewTestContext creates a new test context with PostgreSQL testcontainer and runs the actual binary.
-// Requires CONJUR_BINARY env var to specify the path to the conjurctl binary.
-// Build the binary first with: go build -o conjurctl ./cmd/conjurctl
+// NewTestContext creates a new test context with PostgreSQL testcontainer.
+// Modes:
+//   - Binary mode (default): Set CONJUR_BINARY to the path of the conjurctl binary
+//   - Inline mode: Set CONJUR_INLINE=1 to run the server in-process (no binary needed)
 func NewTestContext(ctx context.Context) (*TestContext, error) {
 	// Find project root and migrations directory
 	projectRoot, err := findProjectRoot()
@@ -46,17 +53,23 @@ func NewTestContext(ctx context.Context) (*TestContext, error) {
 	}
 	migrationsDir := filepath.Join(projectRoot, "db", "migrations")
 
-	// CONJUR_BINARY is required
+	// Check mode
+	inlineMode := os.Getenv("CONJUR_INLINE") == "1"
 	binaryPath := os.Getenv("CONJUR_BINARY")
-	if binaryPath == "" {
-		return nil, fmt.Errorf("CONJUR_BINARY env var is required. Build the binary first:\n  go build -o conjurctl ./cmd/conjurctl\nThen run:\n  INTEGRATION_TEST=1 CONJUR_BINARY=./conjurctl go test -v ./test/integration/...")
+
+	if !inlineMode && binaryPath == "" {
+		return nil, fmt.Errorf("Either CONJUR_BINARY or CONJUR_INLINE=1 is required.\n\nBinary mode:\n  go build -o conjurctl ./cmd/conjurctl\n  INTEGRATION_TEST=1 CONJUR_BINARY=$(pwd)/conjurctl go test -v ./test/integration/...\n\nInline mode:\n  INTEGRATION_TEST=1 CONJUR_INLINE=1 go test -v ./test/integration/...")
 	}
 
-	// Verify the binary exists
-	if _, err := os.Stat(binaryPath); err != nil {
-		return nil, fmt.Errorf("CONJUR_BINARY path does not exist: %s", binaryPath)
+	if !inlineMode {
+		// Verify the binary exists
+		if _, err := os.Stat(binaryPath); err != nil {
+			return nil, fmt.Errorf("CONJUR_BINARY path does not exist: %s", binaryPath)
+		}
+		log.Printf("Using binary: %s", binaryPath)
+	} else {
+		log.Println("Using inline server mode")
 	}
-	log.Printf("Using binary: %s", binaryPath)
 
 	// Start PostgreSQL container
 	pgContainer, err := tcpostgres.Run(ctx,
@@ -127,20 +140,35 @@ func NewTestContext(ctx context.Context) (*TestContext, error) {
 	dbCtx := context.WithValue(context.Background(), "cipher", cipher)
 	db = db.WithContext(dbCtx)
 
-	// Start the actual binary
 	serverPort := "18080" // Use a fixed port for testing
-	serverProcess, cancel, err := startBinary(binaryPath, connStr, dataKey, serverPort)
-	if err != nil {
-		_ = pgContainer.Terminate(ctx)
-		return nil, fmt.Errorf("failed to start server binary: %w", err)
-	}
-
 	serverURL := fmt.Sprintf("http://127.0.0.1:%s", serverPort)
+
+	var serverProcess *exec.Cmd
+	var inlineServer *server.Server
+	var cancel context.CancelFunc
+
+	if inlineMode {
+		// Start inline server
+		inlineServer, cancel, err = startInlineServer(db, cipher, serverPort)
+		if err != nil {
+			_ = pgContainer.Terminate(ctx)
+			return nil, fmt.Errorf("failed to start inline server: %w", err)
+		}
+	} else {
+		// Start the actual binary
+		serverProcess, cancel, err = startBinary(binaryPath, connStr, dataKey, serverPort)
+		if err != nil {
+			_ = pgContainer.Terminate(ctx)
+			return nil, fmt.Errorf("failed to start server binary: %w", err)
+		}
+	}
 
 	// Wait for server to be ready
 	if err := waitForServer(serverURL, 30*time.Second); err != nil {
 		cancel()
-		_ = serverProcess.Process.Kill()
+		if serverProcess != nil && serverProcess.Process != nil {
+			_ = serverProcess.Process.Kill()
+		}
 		_ = pgContainer.Terminate(ctx)
 		return nil, fmt.Errorf("server failed to become ready: %w", err)
 	}
@@ -155,7 +183,32 @@ func NewTestContext(ctx context.Context) (*TestContext, error) {
 		HTTPClient:    &http.Client{Timeout: 10 * time.Second},
 		Cancel:        cancel,
 		ServerProcess: serverProcess,
+		InlineServer:  inlineServer,
 	}, nil
+}
+
+// startInlineServer starts the server in-process (no binary needed)
+func startInlineServer(db *gorm.DB, cipher slosilo.SymmetricCipher, port string) (*server.Server, context.CancelFunc, error) {
+	_, cancel := context.WithCancel(context.Background())
+
+	// Create keystore
+	keystore := store.NewKeyStore(db)
+
+	// Register authenticators
+	authnAuth := authn.New(db, cipher)
+	authenticator.DefaultRegistry.Register(authnAuth)
+	_ = authenticator.DefaultRegistry.Enable("authn")
+
+	// Create and configure server
+	s := server.NewServer(keystore, cipher, db, "127.0.0.1", port)
+	endpoints.RegisterAll(s)
+
+	// Start server in background
+	go func() {
+		_ = s.Start()
+	}()
+
+	return s, cancel, nil
 }
 
 // startBinary starts the conjurctl server binary
