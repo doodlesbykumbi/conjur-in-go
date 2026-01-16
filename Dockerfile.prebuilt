@@ -1,7 +1,9 @@
 # Dockerfile for pre-built binary (used in CI/CD)
-# This expects the binary to be at bin/conjurctl (copied from GoReleaser output)
+# This expects binaries at bin/linux/{amd64,arm64}/conjurctl (copied from GoReleaser output)
 
 FROM alpine:3.19
+
+ARG TARGETARCH
 
 RUN apk add --no-cache ca-certificates tzdata
 
@@ -21,8 +23,8 @@ RUN mkdir -p /opt/conjur/etc/ssl/ca \
              /run/authn-local && \
     chown -R conjur:conjur /opt/conjur /run/authn-local
 
-# Copy pre-built binary and migrations
-COPY bin/conjurctl /usr/local/bin/conjurctl
+# Copy pre-built binary for the target architecture and migrations
+COPY bin/linux/${TARGETARCH}/conjurctl /usr/local/bin/conjurctl
 COPY db/migrations ./db/migrations
 
 # Switch to non-root user
