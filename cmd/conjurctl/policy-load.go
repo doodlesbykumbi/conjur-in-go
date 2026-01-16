@@ -7,9 +7,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
+	"conjur-in-go/pkg/db"
 	"conjur-in-go/pkg/policy"
 	"conjur-in-go/pkg/slosilo"
 )
@@ -48,23 +47,6 @@ func init() {
 }
 
 func loadPolicyFile(account, filename string) (*policy.LoadResult, error) {
-	// Connect to database
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		return nil, fmt.Errorf("DATABASE_URL environment variable is required")
-	}
-
-	db, err := gorm.Open(
-		postgres.New(postgres.Config{
-			DSN:                  dbURL,
-			PreferSimpleProtocol: true,
-		}),
-		&gorm.Config{},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
-	}
-
 	// Load data key for encryption
 	dataKeyB64 := os.Getenv("CONJUR_DATA_KEY")
 	if dataKeyB64 == "" {
@@ -79,6 +61,12 @@ func loadPolicyFile(account, filename string) (*policy.LoadResult, error) {
 		return nil, fmt.Errorf("failed to create cipher: %w", err)
 	}
 
+	// Connect to database
+	database, err := db.Connect(db.Config{Cipher: cipher})
+	if err != nil {
+		return nil, err
+	}
+
 	// Open policy file
 	file, err := os.Open(filename)
 	if err != nil {
@@ -87,7 +75,7 @@ func loadPolicyFile(account, filename string) (*policy.LoadResult, error) {
 	defer func() { _ = file.Close() }()
 
 	// Load policy
-	loader := policy.NewLoader(db, cipher, account)
+	loader := policy.NewLoader(database, cipher, account)
 	result, err := loader.LoadFromReader(file)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load policy: %w", err)

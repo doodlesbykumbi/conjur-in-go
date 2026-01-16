@@ -34,3 +34,10 @@ Feature: Account Management
   Scenario: Cannot delete non-existent account
     When I delete the account "nonexistent"
     Then the response status should be 404
+
+  Scenario: Retrieve API key for admin role
+    When I create an account "keytest"
+    Then the response status should be 201
+    And the response should contain an API key
+    When I retrieve the key for role "keytest:user:admin"
+    Then the retrieved key should match the original API key

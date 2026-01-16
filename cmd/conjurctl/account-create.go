@@ -1,16 +1,14 @@
 package main
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
+	"conjur-in-go/pkg/db"
 	"conjur-in-go/pkg/model"
 	"conjur-in-go/pkg/slosilo"
 )
@@ -76,29 +74,15 @@ func createAccount(accountName string) (string, error) {
 	}
 
 	// Connect to database
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		return "", fmt.Errorf("DATABASE_URL environment variable is required")
-	}
-
-	db, err := gorm.Open(
-		postgres.New(postgres.Config{
-			DSN:                  dbURL,
-			PreferSimpleProtocol: true,
-		}),
-		&gorm.Config{},
-	)
+	database, err := db.Connect(db.Config{Cipher: cipher})
 	if err != nil {
-		return "", fmt.Errorf("failed to connect to database: %w", err)
+		return "", err
 	}
-
-	ctx := context.WithValue(context.Background(), "cipher", cipher)
-	db = db.WithContext(ctx)
 
 	// Check if account already exists
 	var existingKey model.Key
 	keyId := "authn:" + accountName
-	if err := db.Where("id = ?", keyId).First(&existingKey).Error; err == nil {
+	if err := database.Where("id = ?", keyId).First(&existingKey).Error; err == nil {
 		return "", fmt.Errorf("account '%s' already exists", accountName)
 	}
 
@@ -126,7 +110,7 @@ func createAccount(accountName string) (string, error) {
 		Fingerprint: key.Fingerprint(),
 	}
 
-	if err := db.Create(&storedKey).Error; err != nil {
+	if err := database.Create(&storedKey).Error; err != nil {
 		return "", fmt.Errorf("failed to store signing key: %w", err)
 	}
 
@@ -138,7 +122,7 @@ func createAccount(accountName string) (string, error) {
 		RoleId: adminRoleId,
 	}
 
-	if err := db.Table("roles").Create(&adminRole).Error; err != nil {
+	if err := database.Table("roles").Create(&adminRole).Error; err != nil {
 		return "", fmt.Errorf("failed to create admin role: %w", err)
 	}
 
@@ -150,7 +134,7 @@ func createAccount(accountName string) (string, error) {
 		RoleId: policyRoleId,
 	}
 
-	if err := db.Table("roles").Create(&policyRole).Error; err != nil {
+	if err := database.Table("roles").Create(&policyRole).Error; err != nil {
 		return "", fmt.Errorf("failed to create policy role: %w", err)
 	}
 
@@ -164,7 +148,7 @@ func createAccount(accountName string) (string, error) {
 		OwnerId:    adminRoleId,
 	}
 
-	if err := db.Table("resources").Create(&adminResource).Error; err != nil {
+	if err := database.Table("resources").Create(&adminResource).Error; err != nil {
 		return "", fmt.Errorf("failed to create admin resource: %w", err)
 	}
 
@@ -178,7 +162,7 @@ func createAccount(accountName string) (string, error) {
 		OwnerId:    adminRoleId,
 	}
 
-	if err := db.Table("resources").Create(&policyResource).Error; err != nil {
+	if err := database.Table("resources").Create(&policyResource).Error; err != nil {
 		return "", fmt.Errorf("failed to create policy resource: %w", err)
 	}
 
@@ -196,7 +180,7 @@ func createAccount(accountName string) (string, error) {
 	}
 
 	// Store credentials for admin using raw SQL to avoid GORM issues with bytea
-	if err := db.Exec(`
+	if err := database.Exec(`
 		INSERT INTO credentials (role_id, api_key) VALUES (?, ?)
 		ON CONFLICT (role_id) DO UPDATE SET api_key = EXCLUDED.api_key
 	`, adminRoleId, encryptedApiKey).Error; err != nil {

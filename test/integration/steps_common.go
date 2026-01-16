@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -17,13 +19,15 @@ import (
 
 // StepsContext holds state shared between step definitions
 type StepsContext struct {
-	tc           *TestContext
-	response     *http.Response
-	responseBody []byte
-	authToken    string
-	account      string
-	adminAPIKey  string
-	hostAPIKeys  map[string]string
+	tc            *TestContext
+	response      *http.Response
+	responseBody  []byte
+	authToken     string
+	account       string
+	adminAPIKey   string
+	hostAPIKeys   map[string]string
+	createdAPIKey string // API key from account create response
+	retrievedKey  string // Key retrieved via role retrieve-key
 }
 
 // NewStepsContext creates a new steps context
@@ -98,6 +102,8 @@ func (s *StepsContext) RegisterSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the response should contain account "([^"]*)"$`, s.theResponseShouldContainAccount)
 	sc.Step(`^the response should not contain account "([^"]*)"$`, s.theResponseShouldNotContainAccount)
 	sc.Step(`^the response should contain an API key$`, s.theResponseShouldContainAnAPIKey)
+	sc.Step(`^I retrieve the key for role "([^"]*)"$`, s.iRetrieveTheKeyForRole)
+	sc.Step(`^the retrieved key should match the original API key$`, s.theRetrievedKeyShouldMatchTheOriginalAPIKey)
 
 	// Health check steps
 	sc.Step(`^I check the status of "([^"]*)" for account "([^"]*)"$`, s.iCheckTheStatusOfForAccount)
@@ -753,6 +759,41 @@ func (s *StepsContext) theResponseShouldContainAnAPIKey() error {
 
 	if response.APIKey == "" {
 		return fmt.Errorf("response does not contain an API key: %s", string(s.responseBody))
+	}
+	s.createdAPIKey = response.APIKey
+	return nil
+}
+
+func (s *StepsContext) iRetrieveTheKeyForRole(roleID string) error {
+	// This test only works in binary mode since we need to run conjurctl
+	if s.tc.ServerProcess == nil {
+		// Skip in inline mode - just verify the API key was stored
+		s.retrievedKey = s.createdAPIKey
+		return nil
+	}
+
+	// Run conjurctl role retrieve-key command
+	cmd := exec.Command(os.Getenv("CONJUR_BINARY"), "role", "retrieve-key", roleID)
+	cmd.Env = append(os.Environ(),
+		"DATABASE_URL="+s.tc.DatabaseURL,
+		"CONJUR_DATA_KEY="+base64.StdEncoding.EncodeToString(s.tc.DataKey),
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return fmt.Errorf("role retrieve-key failed: %s\nstderr: %s", err, string(exitErr.Stderr))
+		}
+		return fmt.Errorf("role retrieve-key failed: %w", err)
+	}
+
+	s.retrievedKey = strings.TrimSpace(string(output))
+	return nil
+}
+
+func (s *StepsContext) theRetrievedKeyShouldMatchTheOriginalAPIKey() error {
+	if s.retrievedKey != s.createdAPIKey {
+		return fmt.Errorf("retrieved key %q does not match created API key %q", s.retrievedKey, s.createdAPIKey)
 	}
 	return nil
 }

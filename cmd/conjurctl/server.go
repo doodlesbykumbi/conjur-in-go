@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/base64"
 	"fmt"
 	"log"
@@ -9,11 +8,10 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
 	"conjur-in-go/pkg/authenticator"
 	"conjur-in-go/pkg/authenticator/authn"
+	"conjur-in-go/pkg/db"
 	"conjur-in-go/pkg/server"
 	"conjur-in-go/pkg/server/endpoints"
 	"conjur-in-go/pkg/slosilo"
@@ -90,26 +88,16 @@ By default, database migrations are run on startup. Use --no-migrate to skip.`,
 			os.Exit(1)
 		}
 
-		db, err := gorm.Open(
-			postgres.New(
-				postgres.Config{
-					DSN:                  os.Getenv("DATABASE_URL"),
-					PreferSimpleProtocol: true, // disables implicit prepared statement usage
-				},
-			),
-			&gorm.Config{},
-		)
+		database, err := db.Connect(db.Config{Cipher: cipher})
 		if err != nil {
 			fmt.Println("Unable to connect to DB:", err)
 			os.Exit(1)
 		}
-		ctx := context.WithValue(context.Background(), "cipher", cipher)
-		db = db.WithContext(ctx)
 
-		keystore := store.NewKeyStore(db)
+		keystore := store.NewKeyStore(database)
 
 		// Register basic authenticator
-		authnAuth := authn.New(db, cipher)
+		authnAuth := authn.New(database, cipher)
 		authenticator.DefaultRegistry.Register(authnAuth)
 		_ = authenticator.DefaultRegistry.Enable("authn")
 
@@ -118,7 +106,7 @@ By default, database migrations are run on startup. Use --no-migrate to skip.`,
 
 		host, _ := cmd.Flags().GetString("bind-address")
 		port, _ := cmd.Flags().GetString("port")
-		s := server.NewServer(keystore, cipher, db, host, port)
+		s := server.NewServer(keystore, cipher, database, host, port)
 
 		endpoints.RegisterAll(s)
 

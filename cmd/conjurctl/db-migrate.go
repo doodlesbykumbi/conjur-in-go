@@ -1,6 +1,7 @@
 package main
 
 import (
+	"conjur-in-go/pkg/db"
 	"database/sql"
 	"fmt"
 	"os"
@@ -74,7 +75,7 @@ func init() {
 }
 
 func getDatabaseURL() string {
-	return os.Getenv("DATABASE_URL")
+	return db.URL()
 }
 
 // getDatabaseURLWithMigrationsTable returns the database URL with custom migrations table

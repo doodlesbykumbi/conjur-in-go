@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -11,10 +10,9 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
-	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
+	"conjur-in-go/pkg/db"
 	"conjur-in-go/pkg/policy"
 	"conjur-in-go/pkg/slosilo"
 )
@@ -59,32 +57,17 @@ func watchPolicy(account, filename string) error {
 		return fmt.Errorf("failed to decode CONJUR_DATA_KEY: %w", err)
 	}
 
-	// Get database URL
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		return fmt.Errorf("DATABASE_URL environment variable is required")
-	}
-
-	// Connect to database
-	db, err := gorm.Open(gormpostgres.New(gormpostgres.Config{
-		DSN:                  dbURL,
-		PreferSimpleProtocol: true,
-	}), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
-	}
-
 	// Create cipher
 	cipher, err := slosilo.NewSymmetric(dataKey)
 	if err != nil {
 		return fmt.Errorf("failed to create cipher: %w", err)
 	}
 
-	// Add cipher to DB context
-	ctx := context.WithValue(context.Background(), "cipher", cipher)
-	db = db.WithContext(ctx)
+	// Connect to database
+	database, err := db.Connect(db.Config{Cipher: cipher})
+	if err != nil {
+		return err
+	}
 
 	// Create file watcher
 	watcher, err := fsnotify.NewWatcher()
@@ -126,7 +109,7 @@ func watchPolicy(account, filename string) error {
 				}
 
 				// Load the policy
-				if err := loadPolicyFromPath(db, cipher, account, policyPath); err != nil {
+				if err := loadPolicyFromPath(database, cipher, account, policyPath); err != nil {
 					fmt.Fprintf(os.Stderr, "Error loading policy: %v\n", err)
 				} else {
 					fmt.Printf("Policy loaded successfully from %s\n", policyPath)
@@ -144,14 +127,14 @@ func watchPolicy(account, filename string) error {
 	}
 }
 
-func loadPolicyFromPath(db *gorm.DB, cipher slosilo.SymmetricCipher, account, policyPath string) error {
+func loadPolicyFromPath(database *gorm.DB, cipher slosilo.SymmetricCipher, account, policyPath string) error {
 	file, err := os.Open(policyPath)
 	if err != nil {
 		return fmt.Errorf("failed to open policy file: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 
-	loader := policy.NewLoader(db, cipher, account)
+	loader := policy.NewLoader(database, cipher, account)
 	_, err = loader.LoadFromReader(file)
 	return err
 }

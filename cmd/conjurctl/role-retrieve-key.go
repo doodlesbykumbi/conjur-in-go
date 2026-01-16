@@ -1,16 +1,13 @@
 package main
 
 import (
-	"context"
 	"encoding/base64"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
-	gormpostgres "gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
+	"conjur-in-go/pkg/db"
 	"conjur-in-go/pkg/slosilo"
 )
 
@@ -55,46 +52,33 @@ func retrieveKey(roleID string) (string, error) {
 		return "", fmt.Errorf("failed to decode CONJUR_DATA_KEY: %w", err)
 	}
 
-	// Get database URL
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		return "", fmt.Errorf("DATABASE_URL environment variable is required")
-	}
-
-	// Connect to database
-	db, err := gorm.Open(gormpostgres.New(gormpostgres.Config{
-		DSN:                  dbURL,
-		PreferSimpleProtocol: true,
-	}), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to connect to database: %w", err)
-	}
-
 	// Create cipher for key decryption
 	cipher, err := slosilo.NewSymmetric(dataKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to create cipher: %w", err)
 	}
 
-	// Add cipher to DB context
-	ctx := context.WithValue(context.Background(), "cipher", cipher)
-	db = db.WithContext(ctx)
+	// Connect to database
+	database, err := db.Connect(db.Config{Cipher: cipher})
+	if err != nil {
+		return "", err
+	}
 
 	// Get the encrypted API key
-	var encryptedAPIKey []byte
-	err = db.Raw(`SELECT api_key FROM credentials WHERE role_id = ?`, roleID).Scan(&encryptedAPIKey).Error
+	var result struct {
+		ApiKey []byte `gorm:"column:api_key"`
+	}
+	err = database.Raw(`SELECT api_key FROM credentials WHERE role_id = ?`, roleID).Scan(&result).Error
 	if err != nil {
 		return "", fmt.Errorf("role not found: %s", roleID)
 	}
 
-	if len(encryptedAPIKey) == 0 {
+	if len(result.ApiKey) == 0 {
 		return "", fmt.Errorf("no API key found for role: %s", roleID)
 	}
 
 	// Decrypt the API key
-	apiKey, err := cipher.Decrypt([]byte(roleID), encryptedAPIKey)
+	apiKey, err := cipher.Decrypt([]byte(roleID), result.ApiKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt API key: %w", err)
 	}

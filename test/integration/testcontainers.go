@@ -33,6 +33,7 @@ type TestContext struct {
 	RawDB         *sql.DB
 	Container     testcontainers.Container
 	ServerURL     string
+	DatabaseURL   string // Connection string for the test database
 	DataKey       []byte
 	Cipher        slosilo.SymmetricCipher
 	HTTPClient    *http.Client
@@ -178,6 +179,7 @@ func NewTestContext(ctx context.Context) (*TestContext, error) {
 		RawDB:         rawDB,
 		Container:     pgContainer,
 		ServerURL:     serverURL,
+		DatabaseURL:   connStr,
 		DataKey:       dataKey,
 		Cipher:        cipher,
 		HTTPClient:    &http.Client{Timeout: 10 * time.Second},
