@@ -10,7 +10,6 @@ import (
 	"gorm.io/gorm"
 
 	"conjur-in-go/pkg/server"
-	"conjur-in-go/pkg/server/middleware"
 	"conjur-in-go/pkg/slosilo"
 )
 
@@ -19,10 +18,8 @@ func RegisterPublicKeysEndpoints(s *server.Server) {
 	db := s.DB
 	cipher := s.Cipher
 
-	jwtMiddleware := middleware.NewJWTAuthenticator(s.Keystore)
-
 	publicKeysRouter := s.Router.PathPrefix("/public_keys").Subrouter()
-	publicKeysRouter.Use(jwtMiddleware.Middleware)
+	publicKeysRouter.Use(s.JWTMiddleware.Middleware)
 
 	// GET /public_keys/{account}/{kind}/{identifier} - Get public keys for a user/host
 	publicKeysRouter.HandleFunc("/{account}/{kind}/{identifier:.+}", handleGetPublicKeys(db, cipher)).Methods("GET")

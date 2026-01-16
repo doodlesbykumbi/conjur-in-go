@@ -17,11 +17,9 @@ type WhoamiResponse struct {
 
 // RegisterWhoamiEndpoint registers the /whoami endpoint
 func RegisterWhoamiEndpoint(s *server.Server) {
-	jwtMiddleware := middleware.NewJWTAuthenticator(s.Keystore)
-
 	// Create a subrouter for /whoami that uses JWT auth
 	whoamiRouter := s.Router.PathPrefix("/whoami").Subrouter()
-	whoamiRouter.Use(jwtMiddleware.Middleware)
+	whoamiRouter.Use(s.JWTMiddleware.Middleware)
 
 	whoamiRouter.HandleFunc("", handleWhoami()).Methods("GET")
 }

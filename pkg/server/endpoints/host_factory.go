@@ -22,11 +22,9 @@ func RegisterHostFactoryEndpoints(s *server.Server) {
 	db := s.DB
 	cipher := s.Cipher
 
-	jwtMiddleware := middleware.NewJWTAuthenticator(s.Keystore)
-
 	// POST /host_factory_tokens - Create token(s) (requires JWT auth)
 	tokensRouter := s.Router.PathPrefix("/host_factory_tokens").Subrouter()
-	tokensRouter.Use(jwtMiddleware.Middleware)
+	tokensRouter.Use(s.JWTMiddleware.Middleware)
 
 	tokensRouter.HandleFunc("", handleCreateToken(db, cipher)).Methods("POST")
 	tokensRouter.HandleFunc("/{token}", handleDeleteToken(db)).Methods("DELETE")

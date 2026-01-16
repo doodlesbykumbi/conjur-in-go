@@ -33,10 +33,8 @@ type MembershipGrant struct {
 func RegisterRolesEndpoints(s *server.Server) {
 	db := s.DB
 
-	jwtMiddleware := middleware.NewJWTAuthenticator(s.Keystore)
-
 	rolesRouter := s.Router.PathPrefix("/roles").Subrouter()
-	rolesRouter.Use(jwtMiddleware.Middleware)
+	rolesRouter.Use(s.JWTMiddleware.Middleware)
 
 	// GET /roles/{account}/{kind}/{identifier} - Show role
 	// Also handles ?members, ?memberships, ?all query params

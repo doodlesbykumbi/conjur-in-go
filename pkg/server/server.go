@@ -10,17 +10,19 @@ import (
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 
+	"conjur-in-go/pkg/server/middleware"
 	"conjur-in-go/pkg/slosilo"
 	"conjur-in-go/pkg/slosilo/store"
 )
 
 type Server struct {
-	Keystore *store.KeyStore
-	Cipher   slosilo.SymmetricCipher
-	Router   *mux.Router
-	DB       *gorm.DB
-	srv      *http.Server
-	listener net.Listener
+	Keystore      *store.KeyStore
+	Cipher        slosilo.SymmetricCipher
+	Router        *mux.Router
+	DB            *gorm.DB
+	JWTMiddleware *middleware.JWTAuthenticator
+	srv           *http.Server
+	listener      net.Listener
 }
 
 func NewServer(
@@ -31,7 +33,7 @@ func NewServer(
 	port string,
 ) *Server {
 
-	router := mux.NewRouter().UseEncodedPath()
+	router := mux.NewRouter().UseEncodedPath().StrictSlash(true)
 	srv := &http.Server{
 		Handler: handlers.LoggingHandler(os.Stdout, router),
 		Addr:    host + ":" + port,
@@ -41,11 +43,12 @@ func NewServer(
 	}
 
 	return &Server{
-		Keystore: keystore,
-		Cipher:   cipher,
-		Router:   router,
-		DB:       db,
-		srv:      srv,
+		Keystore:      keystore,
+		Cipher:        cipher,
+		Router:        router,
+		DB:            db,
+		JWTMiddleware: middleware.NewJWTAuthenticator(keystore),
+		srv:           srv,
 	}
 }
 

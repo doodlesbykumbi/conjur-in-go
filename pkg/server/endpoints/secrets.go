@@ -50,86 +50,79 @@ func isRoleAllowedTo(db *gorm.DB, roleId, privilege, resourceId string) bool {
 }
 
 func RegisterSecretsEndpoints(server *server.Server) {
-	keystore := server.Keystore
 	router := server.Router
 	db := server.DB
 
-	// TODO: this isn't right. The middleware should be available everywhere for consumption by multiple routes
-	jwtMiddleware := middleware.NewJWTAuthenticator(keystore)
-
 	secretsRouter := router.PathPrefix("/secrets").Subrouter()
-	secretsRouter.Use(jwtMiddleware.Middleware)
+	secretsRouter.Use(server.JWTMiddleware.Middleware)
 
 	// GET /secrets?variable_ids=... - Batch fetch secrets
-	secretsRouter.HandleFunc(
-		"",
-		func(writer http.ResponseWriter, request *http.Request) {
-			variableIdsParam := request.URL.Query().Get("variable_ids")
-			if variableIdsParam == "" {
-				http.Error(writer, "variable_ids parameter required", http.StatusBadRequest)
+	secretsRouter.HandleFunc("", func(writer http.ResponseWriter, request *http.Request) {
+		variableIdsParam := request.URL.Query().Get("variable_ids")
+		if variableIdsParam == "" {
+			http.Error(writer, "variable_ids parameter required", http.StatusBadRequest)
+			return
+		}
+
+		// Parse comma-separated variable IDs
+		variableIds := strings.Split(variableIdsParam, ",")
+
+		// Get role from auth context
+		tokenInfo, _ := middleware.GetTokenInfo(request.Context())
+		roleId := tokenInfo.RoleID
+
+		// Check if base64 encoding is requested
+		useBase64 := strings.EqualFold(request.Header.Get("Accept-Encoding"), "base64")
+
+		// Fetch each secret
+		results := make(map[string]string)
+		for _, varId := range variableIds {
+			varId = strings.TrimSpace(varId)
+			if varId == "" {
+				continue
+			}
+
+			// Check permission
+			if !isRoleAllowedTo(db, roleId, "execute", varId) {
+				// Return 403 for unauthorized access
+				respondWithError(writer, http.StatusForbidden, map[string]string{
+					"error": fmt.Sprintf("Forbidden: role does not have execute permission on %s", varId),
+				})
 				return
 			}
 
-			// Parse comma-separated variable IDs
-			variableIds := strings.Split(variableIdsParam, ",")
-
-			// Get role from auth context
-			tokenInfo, _ := middleware.GetTokenInfo(request.Context())
-			roleId := tokenInfo.RoleID
-
-			// Check if base64 encoding is requested
-			useBase64 := strings.EqualFold(request.Header.Get("Accept-Encoding"), "base64")
-
-			// Fetch each secret
-			results := make(map[string]string)
-			for _, varId := range variableIds {
-				varId = strings.TrimSpace(varId)
-				if varId == "" {
-					continue
-				}
-
-				// Check permission
-				if !isRoleAllowedTo(db, roleId, "execute", varId) {
-					// Return 403 for unauthorized access
-					respondWithError(writer, http.StatusForbidden, map[string]string{
-						"error": fmt.Sprintf("Forbidden: role does not have execute permission on %s", varId),
+			// Fetch the secret
+			secret, err := fetchSecret(db, varId, "")
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					respondWithError(writer, http.StatusNotFound, map[string]string{
+						"error": fmt.Sprintf("Variable %s has no secret value", varId),
 					})
 					return
 				}
-
-				// Fetch the secret
-				secret, err := fetchSecret(db, varId, "")
-				if err != nil {
-					if errors.Is(err, gorm.ErrRecordNotFound) {
-						respondWithError(writer, http.StatusNotFound, map[string]string{
-							"error": fmt.Sprintf("Variable %s has no secret value", varId),
-						})
-						return
-					}
-					if errors.Is(err, ErrSecretExpired) {
-						respondWithError(writer, http.StatusNotFound, map[string]string{
-							"error": fmt.Sprintf("Variable %s has expired", varId),
-						})
-						return
-					}
-					http.Error(writer, err.Error(), http.StatusInternalServerError)
+				if errors.Is(err, ErrSecretExpired) {
+					respondWithError(writer, http.StatusNotFound, map[string]string{
+						"error": fmt.Sprintf("Variable %s has expired", varId),
+					})
 					return
 				}
-
-				value := string(secret.Value)
-				if useBase64 {
-					value = base64.StdEncoding.EncodeToString(secret.Value)
-				}
-				results[varId] = value
+				http.Error(writer, err.Error(), http.StatusInternalServerError)
+				return
 			}
 
+			value := string(secret.Value)
 			if useBase64 {
-				writer.Header().Set("Content-Encoding", "base64")
+				value = base64.StdEncoding.EncodeToString(secret.Value)
 			}
-			writer.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(writer).Encode(results)
-		},
-	).Methods("GET").Queries("variable_ids", "{variable_ids}")
+			results[varId] = value
+		}
+
+		if useBase64 {
+			writer.Header().Set("Content-Encoding", "base64")
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(results)
+	}).Methods("GET").Queries("variable_ids", "{variable_ids}")
 
 	// GET /secrets/{account}/{kind}/{identifier} - Fetch single secret
 	secretsRouter.HandleFunc(

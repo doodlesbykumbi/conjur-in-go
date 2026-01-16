@@ -43,10 +43,8 @@ type SecretMetaResponse struct {
 func RegisterResourcesEndpoints(s *server.Server) {
 	db := s.DB
 
-	jwtMiddleware := middleware.NewJWTAuthenticator(s.Keystore)
-
 	resourcesRouter := s.Router.PathPrefix("/resources").Subrouter()
-	resourcesRouter.Use(jwtMiddleware.Middleware)
+	resourcesRouter.Use(s.JWTMiddleware.Middleware)
 
 	// GET /resources/{account} - List all resources
 	// GET /resources/{account}/{kind} - List resources by kind

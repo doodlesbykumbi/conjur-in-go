@@ -35,10 +35,8 @@ type PolicyVersionResponse struct {
 
 // RegisterPoliciesEndpoints registers the policy-related HTTP endpoints
 func RegisterPoliciesEndpoints(s *server.Server) {
-	jwtMiddleware := middleware.NewJWTAuthenticator(s.Keystore)
-
 	policiesRouter := s.Router.PathPrefix("/policies").Subrouter()
-	policiesRouter.Use(jwtMiddleware.Middleware)
+	policiesRouter.Use(s.JWTMiddleware.Middleware)
 
 	// GET /policies/{account}/policy/{identifier} - Get policy versions
 	policiesRouter.HandleFunc("/{account}/policy/{identifier}", handleGetPolicy(s.DB)).Methods("GET")

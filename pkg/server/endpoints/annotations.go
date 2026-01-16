@@ -16,11 +16,9 @@ import (
 func RegisterAnnotationsEndpoints(s *server.Server) {
 	db := s.DB
 
-	jwtMiddleware := middleware.NewJWTAuthenticator(s.Keystore)
-
 	// Annotations are accessed via /resources/{account}/{kind}/{id}/annotations
 	annotationsRouter := s.Router.PathPrefix("/resources").Subrouter()
-	annotationsRouter.Use(jwtMiddleware.Middleware)
+	annotationsRouter.Use(s.JWTMiddleware.Middleware)
 
 	// GET /resources/{account}/{kind}/{id}/annotations - List all annotations
 	annotationsRouter.HandleFunc("/{account}/{kind}/{identifier:.+}/annotations", handleListAnnotations(db)).Methods("GET")
