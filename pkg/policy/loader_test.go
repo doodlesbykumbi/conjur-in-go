@@ -105,15 +105,23 @@ func TestQualifyID(t *testing.T) {
 			policyPath: []string{"app"},
 			kind:       "user",
 			id:         "deployer",
-			expected:   "myorg:user:app/deployer",
+			expected:   "myorg:user:deployer@app",
 		},
 		{
-			name:       "deeply nested",
+			name:       "deeply nested variable",
 			account:    "myorg",
 			policyPath: []string{"app", "prod", "db"},
 			kind:       "variable",
 			id:         "password",
 			expected:   "myorg:variable:app/prod/db/password",
+		},
+		{
+			name:       "deeply nested user uses @ notation with - joined path",
+			account:    "myorg",
+			policyPath: []string{"app", "prod"},
+			kind:       "user",
+			id:         "deployer",
+			expected:   "myorg:user:deployer@app-prod",
 		},
 	}
 

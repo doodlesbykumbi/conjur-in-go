@@ -231,10 +231,17 @@ func (ctx *loadContext) currentPolicyID() string {
 }
 
 // qualifyID creates a fully qualified ID for a resource/role
+// For users, Ruby Conjur uses a special '@' notation: user Dave in policy BotApp becomes Dave@BotApp
 func (ctx *loadContext) qualifyID(kind, id string) string {
 	var fullID string
 	if len(ctx.policyPath) > 0 {
-		fullID = strings.Join(ctx.policyPath, "/") + "/" + id
+		if kind == "user" {
+			// Users use @ notation: id@policy-path (with path segments joined by -)
+			namespace := strings.Join(ctx.policyPath, "-")
+			fullID = id + "@" + namespace
+		} else {
+			fullID = strings.Join(ctx.policyPath, "/") + "/" + id
+		}
 	} else {
 		fullID = id
 	}
