@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"conjur-in-go/pkg/slosilo"
-	"conjur-in-go/pkg/slosilo/store"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo/store"
 )
 
 var tokenRegex = regexp.MustCompile(`^Token token="(.*)"`)

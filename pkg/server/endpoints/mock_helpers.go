@@ -8,9 +8,9 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"conjur-in-go/pkg/server"
-	"conjur-in-go/pkg/slosilo"
-	"conjur-in-go/pkg/slosilo/store"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo/store"
 )
 
 // MockTestServer creates a server instance with a mocked database for unit testing

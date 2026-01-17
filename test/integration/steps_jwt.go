@@ -14,8 +14,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"conjur-in-go/pkg/authenticator"
-	"conjur-in-go/pkg/authenticator/authn_jwt"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator/authn_jwt"
 )
 
 var (

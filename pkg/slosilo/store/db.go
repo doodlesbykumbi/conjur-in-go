@@ -6,8 +6,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"conjur-in-go/pkg/model"
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/model"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 var accountKeyIdRgx = regexp.MustCompile(`^authn:([^:]*)`)

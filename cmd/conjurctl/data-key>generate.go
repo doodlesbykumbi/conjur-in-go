@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 // dataKeyGenerateCmd represents the data-key > generate command

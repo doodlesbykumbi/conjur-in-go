@@ -8,10 +8,10 @@ import (
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 
-	"conjur-in-go/pkg/model"
-	"conjur-in-go/pkg/server"
-	"conjur-in-go/pkg/slosilo"
-	"conjur-in-go/pkg/slosilo/store"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/model"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo/store"
 )
 
 // AccountResponse represents an account in API responses

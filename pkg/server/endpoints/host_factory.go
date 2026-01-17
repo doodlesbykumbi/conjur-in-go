@@ -11,10 +11,10 @@ import (
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 
-	"conjur-in-go/pkg/model"
-	"conjur-in-go/pkg/server"
-	"conjur-in-go/pkg/server/middleware"
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/model"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/middleware"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 // RegisterHostFactoryEndpoints registers the host factory API endpoints

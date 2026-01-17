@@ -1,10 +1,11 @@
 package authenticator
 
 import (
-	"conjur-in-go/pkg/config"
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/config"
 )
 
 // Authenticator defines the interface for all authenticators

@@ -1,12 +1,13 @@
 package main
 
 import (
-	"conjur-in-go/pkg/db"
 	"database/sql"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/db"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"

@@ -9,8 +9,8 @@ import (
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 
-	"conjur-in-go/pkg/server"
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 // RegisterPublicKeysEndpoints registers the public keys API endpoints

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 func TestSecretsEndpoint(t *testing.T) {

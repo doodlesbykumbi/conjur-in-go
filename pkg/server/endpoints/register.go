@@ -1,6 +1,6 @@
 package endpoints
 
-import "conjur-in-go/pkg/server"
+import "github.com/doodlesbykumbi/conjur-in-go/pkg/server"
 
 // RegisterAll registers all API endpoints on the server
 func RegisterAll(srv *server.Server) {

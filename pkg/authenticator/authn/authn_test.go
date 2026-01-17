@@ -12,8 +12,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"conjur-in-go/pkg/authenticator"
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 func setupTestDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, slosilo.SymmetricCipher) {

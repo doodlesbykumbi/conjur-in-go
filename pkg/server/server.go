@@ -10,9 +10,9 @@ import (
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 
-	"conjur-in-go/pkg/server/middleware"
-	"conjur-in-go/pkg/slosilo"
-	"conjur-in-go/pkg/slosilo/store"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/middleware"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo/store"
 )
 
 type Server struct {

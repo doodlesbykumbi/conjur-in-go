@@ -11,7 +11,7 @@ import (
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 type Credential struct {

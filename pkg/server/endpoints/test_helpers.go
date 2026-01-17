@@ -11,10 +11,10 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"conjur-in-go/pkg/server"
-	"conjur-in-go/pkg/slosilo"
-	"conjur-in-go/pkg/slosilo/store"
-	"conjur-in-go/pkg/utils"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo/store"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/utils"
 )
 
 // TestServer creates a server instance for testing

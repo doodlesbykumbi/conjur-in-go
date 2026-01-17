@@ -8,7 +8,7 @@ import (
 	"os"
 	"testing"
 
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 func TestWhoamiEndpoint(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"conjur-in-go/pkg/config"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/config"
 )
 
 // configurationShowCmd represents the configuration show command

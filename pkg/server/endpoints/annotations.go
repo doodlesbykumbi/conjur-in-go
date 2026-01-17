@@ -8,8 +8,8 @@ import (
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 
-	"conjur-in-go/pkg/server"
-	"conjur-in-go/pkg/server/middleware"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/middleware"
 )
 
 // RegisterAnnotationsEndpoints registers the annotations API endpoints

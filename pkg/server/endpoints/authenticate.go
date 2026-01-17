@@ -12,12 +12,12 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"conjur-in-go/pkg/audit"
-	"conjur-in-go/pkg/config"
-	"conjur-in-go/pkg/model"
-	"conjur-in-go/pkg/server"
-	"conjur-in-go/pkg/slosilo"
-	"conjur-in-go/pkg/utils"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/audit"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/config"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/model"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/utils"
 )
 
 const acceptEncoding string = "Accept-Encoding"

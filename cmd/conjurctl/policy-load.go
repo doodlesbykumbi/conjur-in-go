@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"conjur-in-go/pkg/db"
-	"conjur-in-go/pkg/policy"
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/db"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/policy"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 // policyLoadCmd represents the policy load command

@@ -12,14 +12,14 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"conjur-in-go/pkg/audit"
-	"conjur-in-go/pkg/authenticator"
-	"conjur-in-go/pkg/authenticator/authn_jwt"
-	"conjur-in-go/pkg/config"
-	"conjur-in-go/pkg/server"
-	"conjur-in-go/pkg/slosilo"
-	"conjur-in-go/pkg/slosilo/store"
-	"conjur-in-go/pkg/utils"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/audit"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator/authn_jwt"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/config"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo/store"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/utils"
 )
 
 // RegisterJWTAuthenticateEndpoint registers the JWT authentication endpoints

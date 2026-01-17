@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"conjur-in-go/pkg/db"
-	"conjur-in-go/pkg/model"
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/db"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/model"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 // accountCreateCmd represents the account create command

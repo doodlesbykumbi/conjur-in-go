@@ -1,4 +1,4 @@
-module conjur-in-go
+module github.com/doodlesbykumbi/conjur-in-go
 
 go 1.24.0
 

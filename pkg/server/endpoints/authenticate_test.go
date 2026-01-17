@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 func TestRoleIdFromLogin(t *testing.T) {

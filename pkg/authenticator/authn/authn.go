@@ -9,8 +9,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"conjur-in-go/pkg/authenticator"
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 // Authenticator implements API key authentication

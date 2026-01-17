@@ -2,7 +2,6 @@ package integration
 
 import (
 	"bytes"
-	"conjur-in-go/pkg/slosilo"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,6 +12,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 
 	"github.com/cucumber/godog"
 )

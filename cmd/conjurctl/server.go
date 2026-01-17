@@ -9,13 +9,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"conjur-in-go/pkg/authenticator"
-	"conjur-in-go/pkg/authenticator/authn"
-	"conjur-in-go/pkg/db"
-	"conjur-in-go/pkg/server"
-	"conjur-in-go/pkg/server/endpoints"
-	"conjur-in-go/pkg/slosilo"
-	"conjur-in-go/pkg/slosilo/store"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator/authn"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/db"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/endpoints"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo/store"
 )
 
 // NOTES

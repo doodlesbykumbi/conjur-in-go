@@ -10,7 +10,7 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "conjurctl",
 	Short: "Command and control application for Conjur",
-	Long: `Command and control application for Conjur`,
+	Long:  `Command and control application for Conjur`,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	// Run: func(cmd *cobra.Command, args []string) { },

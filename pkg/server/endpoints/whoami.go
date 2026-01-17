@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"conjur-in-go/pkg/server"
-	"conjur-in-go/pkg/server/middleware"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/middleware"
 )
 
 // WhoamiResponse represents the response from the /whoami endpoint

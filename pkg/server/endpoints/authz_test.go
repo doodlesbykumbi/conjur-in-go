@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 // TestAuthorization verifies that RBAC is working correctly

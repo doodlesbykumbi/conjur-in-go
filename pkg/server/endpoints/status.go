@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"conjur-in-go/pkg/authenticator"
-	"conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"

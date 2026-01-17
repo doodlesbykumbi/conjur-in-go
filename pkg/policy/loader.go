@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"conjur-in-go/pkg/model"
-	"conjur-in-go/pkg/slosilo"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/model"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
