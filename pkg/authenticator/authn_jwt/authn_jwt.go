@@ -62,8 +62,8 @@ type jwksCache struct {
 	expiresAt time.Time
 }
 
-// New creates a new JWT authenticator with static config
-func New(db *gorm.DB, cipher slosilo.SymmetricCipher, config Config) *Authenticator {
+// NewJWTAuthenticator creates a new JWT authenticator with static config
+func NewJWTAuthenticator(db *gorm.DB, cipher slosilo.SymmetricCipher, config Config) *Authenticator {
 	return &Authenticator{
 		db:     db,
 		cipher: cipher,

@@ -1,4 +1,4 @@
-package policy
+package parser
 
 import (
 	"reflect"
@@ -36,7 +36,7 @@ func copyStructWithoutMethods(in interface{}) interface{} {
 	return newValue.Interface()
 }
 
-func MarshalYAMLWithTag[T Resources](v T, kind Kind) (interface{}, error) {
+func marshalYAMLWithTag[T resources](v T, kind Kind) (interface{}, error) {
 	data := copyStructWithoutMethods(v)
 
 	node := &yaml.Node{}

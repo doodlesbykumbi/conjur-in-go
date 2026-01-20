@@ -43,13 +43,13 @@ func setupTestDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, slosilo.SymmetricCiph
 
 func TestAuthenticator_Name(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
-	auth := New(db, cipher)
+	auth := NewAPIKeyAuthenticator(db, cipher)
 	assert.Equal(t, "authn", auth.Name())
 }
 
 func TestAuthenticator_Authenticate_Success(t *testing.T) {
 	db, mock, cipher := setupTestDB(t)
-	auth := New(db, cipher)
+	auth := NewAPIKeyAuthenticator(db, cipher)
 
 	roleID := "myorg:user:alice"
 	apiKey := "test-api-key-123"
@@ -76,7 +76,7 @@ func TestAuthenticator_Authenticate_Success(t *testing.T) {
 
 func TestAuthenticator_Authenticate_WrongAPIKey(t *testing.T) {
 	db, mock, cipher := setupTestDB(t)
-	auth := New(db, cipher)
+	auth := NewAPIKeyAuthenticator(db, cipher)
 
 	roleID := "myorg:user:bob"
 	apiKey := "correct-api-key"
@@ -102,7 +102,7 @@ func TestAuthenticator_Authenticate_WrongAPIKey(t *testing.T) {
 
 func TestAuthenticator_Authenticate_UserNotFound(t *testing.T) {
 	db, mock, cipher := setupTestDB(t)
-	auth := New(db, cipher)
+	auth := NewAPIKeyAuthenticator(db, cipher)
 
 	roleID := "myorg:user:nonexistent"
 
@@ -123,7 +123,7 @@ func TestAuthenticator_Authenticate_UserNotFound(t *testing.T) {
 
 func TestAuthenticator_Authenticate_EmptyLogin(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
-	auth := New(db, cipher)
+	auth := NewAPIKeyAuthenticator(db, cipher)
 
 	input := authenticator.AuthenticatorInput{
 		Account:     "myorg",
@@ -138,7 +138,7 @@ func TestAuthenticator_Authenticate_EmptyLogin(t *testing.T) {
 
 func TestAuthenticator_Status(t *testing.T) {
 	db, mock, cipher := setupTestDB(t)
-	auth := New(db, cipher)
+	auth := NewAPIKeyAuthenticator(db, cipher)
 
 	mock.ExpectExec(`SELECT 1`).WillReturnResult(sqlmock.NewResult(0, 0))
 

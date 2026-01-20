@@ -1,4 +1,4 @@
-package policy
+package parser
 
 //go:generate go run github.com/dmarkham/enumer -type Kind -trimprefix Kind -transform lower -yaml -output kind.gen.go
 

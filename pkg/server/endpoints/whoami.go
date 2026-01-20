@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/identity"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/middleware"
 )
 
 // WhoamiResponse represents the response from the /whoami endpoint
@@ -26,17 +26,17 @@ func RegisterWhoamiEndpoint(s *server.Server) {
 
 func handleWhoami() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Get token info from context (set by JWT middleware)
-		tokenInfo, ok := middleware.GetTokenInfo(r.Context())
+		// Get identity from context (set by JWT middleware)
+		id, ok := identity.Get(r.Context())
 		if !ok {
 			http.Error(w, "Unable to determine identity", http.StatusUnauthorized)
 			return
 		}
 
 		response := WhoamiResponse{
-			Account:  tokenInfo.Account,
-			Username: tokenInfo.Login,
-			TokenIAT: tokenInfo.IssuedAt.Unix(),
+			Account:  id.Account,
+			Username: id.Login,
+			TokenIAT: id.IssuedAt.Unix(),
 		}
 
 		w.Header().Set("Content-Type", "application/json")

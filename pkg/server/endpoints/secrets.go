@@ -11,70 +11,64 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
-	"gorm.io/gorm"
 
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/audit"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/model"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/identity"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/middleware"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/store"
 )
 
-// ErrSecretExpired is returned when a secret has expired
-var ErrSecretExpired = errors.New("secret has expired")
-
-func fetchSecret(db *gorm.DB, resourceId string, secretVersion string) (*model.Secret, error) {
-	var secret model.Secret
-	query := map[string]interface{}{"resource_id": resourceId}
-	if secretVersion != "" {
-		query["version"] = secretVersion
-	}
-
-	tx := db.Order("version desc").Where(query).First(&secret)
-	err := tx.Error
-	if err != nil {
-		return nil, err
-	}
-
-	// Check if secret has expired
-	if secret.IsExpired() {
-		return nil, ErrSecretExpired
-	}
-
-	return &secret, nil
-}
-
-func isRoleAllowedTo(db *gorm.DB, roleId, privilege, resourceId string) bool {
-	var permitted bool
-	db.Raw(`SELECT is_role_allowed_to(?, ?, ?)`, roleId, privilege, resourceId).Scan(&permitted)
-	return permitted
-}
-
-func RegisterSecretsEndpoints(server *server.Server) {
-	router := server.Router
-	db := server.DB
+func RegisterSecretsEndpoints(s *server.Server) {
+	router := s.Router
+	secretsStore := s.SecretsStore
+	authzStore := s.AuthzStore
 
 	secretsRouter := router.PathPrefix("/secrets").Subrouter()
-	secretsRouter.Use(server.JWTMiddleware.Middleware)
+	secretsRouter.Use(s.JWTMiddleware.Middleware)
 
 	// GET /secrets?variable_ids=... - Batch fetch secrets
-	secretsRouter.HandleFunc("", func(writer http.ResponseWriter, request *http.Request) {
-		variableIdsParam := request.URL.Query().Get("variable_ids")
+	secretsRouter.HandleFunc("", handleBatchFetchSecrets(secretsStore, authzStore)).Methods("GET").Queries("variable_ids", "{variable_ids}")
+
+	// GET /secrets/{account}/{kind}/{identifier} - Fetch single secret
+	secretsRouter.HandleFunc(
+		"/{account}/{kind}/{identifier:.+}",
+		handleFetchSecret(secretsStore, authzStore),
+	).Methods("GET")
+
+	// POST /secrets/{account}/{kind}/{identifier}?expirations - Expire a secret
+	secretsRouter.HandleFunc(
+		"/{account}/{kind}/{identifier:.+}",
+		handleExpireSecret(secretsStore, authzStore),
+	).Methods("POST").Queries("expirations", "")
+
+	// POST /secrets/{account}/{kind}/{identifier} - Create/update a secret value
+	secretsRouter.HandleFunc(
+		"/{account}/{kind}/{identifier:.+}",
+		handleCreateSecret(secretsStore, authzStore),
+	).Methods("POST")
+
+	// POST /secrets/{account}/values - Batch update secrets
+	secretsRouter.HandleFunc(
+		"/{account}/values",
+		handleBatchUpdateSecrets(secretsStore, authzStore),
+	).Methods("POST")
+}
+
+func handleBatchFetchSecrets(secretsStore store.SecretsStore, authzStore store.AuthzStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		variableIdsParam := r.URL.Query().Get("variable_ids")
 		if variableIdsParam == "" {
-			http.Error(writer, "variable_ids parameter required", http.StatusBadRequest)
+			http.Error(w, "variable_ids parameter required", http.StatusBadRequest)
 			return
 		}
 
-		// Parse comma-separated variable IDs
 		variableIds := strings.Split(variableIdsParam, ",")
 
-		// Get role from auth context
-		tokenInfo, _ := middleware.GetTokenInfo(request.Context())
-		roleId := tokenInfo.RoleID
+		id, _ := identity.Get(r.Context())
+		roleId := id.RoleID
 
-		// Check if base64 encoding is requested
-		useBase64 := strings.EqualFold(request.Header.Get("Accept-Encoding"), "base64")
+		useBase64 := strings.EqualFold(r.Header.Get("Accept-Encoding"), "base64")
 
-		// Fetch each secret
 		results := make(map[string]string)
 		for _, varId := range variableIds {
 			varId = strings.TrimSpace(varId)
@@ -82,31 +76,28 @@ func RegisterSecretsEndpoints(server *server.Server) {
 				continue
 			}
 
-			// Check permission
-			if !isRoleAllowedTo(db, roleId, "execute", varId) {
-				// Return 403 for unauthorized access
-				respondWithError(writer, http.StatusForbidden, map[string]string{
+			if !authzStore.IsRoleAllowedTo(roleId, "execute", varId) {
+				respondWithError(w, http.StatusForbidden, map[string]string{
 					"error": fmt.Sprintf("Forbidden: role does not have execute permission on %s", varId),
 				})
 				return
 			}
 
-			// Fetch the secret
-			secret, err := fetchSecret(db, varId, "")
+			secret, err := secretsStore.FetchSecret(varId, "")
 			if err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					respondWithError(writer, http.StatusNotFound, map[string]string{
+				if errors.Is(err, store.ErrSecretNotFound) {
+					respondWithError(w, http.StatusNotFound, map[string]string{
 						"error": fmt.Sprintf("Variable %s has no secret value", varId),
 					})
 					return
 				}
-				if errors.Is(err, ErrSecretExpired) {
-					respondWithError(writer, http.StatusNotFound, map[string]string{
+				if errors.Is(err, store.ErrSecretExpired) {
+					respondWithError(w, http.StatusNotFound, map[string]string{
 						"error": fmt.Sprintf("Variable %s has expired", varId),
 					})
 					return
 				}
-				http.Error(writer, err.Error(), http.StatusInternalServerError)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 
@@ -118,228 +109,186 @@ func RegisterSecretsEndpoints(server *server.Server) {
 		}
 
 		if useBase64 {
-			writer.Header().Set("Content-Encoding", "base64")
+			w.Header().Set("Content-Encoding", "base64")
 		}
-		writer.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(writer).Encode(results)
-	}).Methods("GET").Queries("variable_ids", "{variable_ids}")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(results)
+	}
+}
 
-	// GET /secrets/{account}/{kind}/{identifier} - Fetch single secret
-	secretsRouter.HandleFunc(
-		"/{account}/{kind}/{identifier:.+}", // For 'identifier' we grab the rest of the URL including slashes
-		func(writer http.ResponseWriter, request *http.Request) {
-			secretVersion := request.URL.Query().Get("version")
+func handleFetchSecret(secretsStore store.SecretsStore, authzStore store.AuthzStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		secretVersion := r.URL.Query().Get("version")
 
-			vars := mux.Vars(request)
-			account := vars["account"]
-			kind := vars["kind"]
-			identifier, err := url.PathUnescape(vars["identifier"])
-			if err != nil {
-				http.Error(writer, err.Error(), http.StatusBadRequest)
-				return
-			}
+		vars := mux.Vars(r)
+		account := vars["account"]
+		kind := vars["kind"]
+		identifier, err := url.PathUnescape(vars["identifier"])
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
-			// TODO: use a "service" object to serve the endpoint
-			//  getSecret(roleId, resourceId) ?
+		resourceId := fmt.Sprintf("%s:%s:%s", account, kind, identifier)
 
-			resourceId := fmt.Sprintf("%s:%s:%s", account, kind, identifier)
+		id, _ := identity.Get(r.Context())
+		roleId := id.RoleID
+		clientIP := r.RemoteAddr
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			clientIP = forwarded
+		}
 
-			// Comes from auth
-			tokenInfo, _ := middleware.GetTokenInfo(request.Context())
-			roleId := tokenInfo.RoleID
-			clientIP := request.RemoteAddr
-			if forwarded := request.Header.Get("X-Forwarded-For"); forwarded != "" {
-				clientIP = forwarded
-			}
+		if !authzStore.IsRoleAllowedTo(roleId, "execute", resourceId) {
+			audit.Log(audit.FetchEvent{
+				UserID:       roleId,
+				ClientIP:     clientIP,
+				ResourceID:   resourceId,
+				Version:      secretVersion,
+				Success:      false,
+				ErrorMessage: "permission denied",
+			})
+			http.Error(w, "role does not have execute permissions on secret", http.StatusForbidden)
+			return
+		}
 
-			allowed := isRoleAllowedTo(
-				db,
-				roleId,
-				"execute",
-				resourceId,
-			)
-			if !allowed {
+		secret, err := secretsStore.FetchSecret(resourceId, secretVersion)
+		if err != nil {
+			if errors.Is(err, store.ErrSecretNotFound) {
 				audit.Log(audit.FetchEvent{
 					UserID:       roleId,
 					ClientIP:     clientIP,
 					ResourceID:   resourceId,
 					Version:      secretVersion,
 					Success:      false,
-					ErrorMessage: "permission denied",
+					ErrorMessage: "secret not found",
 				})
-				http.Error(writer, "role does not have execute permissions on secret", http.StatusForbidden)
+				respondWithError(w, http.StatusNotFound, map[string]string{"message": "secret is empty or not found."})
 				return
 			}
-
-			// TODO: There's definitely a better model abstraction here
-			secret, err := fetchSecret(db, resourceId, secretVersion)
-			if err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					audit.Log(audit.FetchEvent{
-						UserID:       roleId,
-						ClientIP:     clientIP,
-						ResourceID:   resourceId,
-						Version:      secretVersion,
-						Success:      false,
-						ErrorMessage: "secret not found",
-					})
-					respondWithError(writer, http.StatusNotFound, map[string]string{"message": "secret is empty or not found."})
-					return
-				}
-				if errors.Is(err, ErrSecretExpired) {
-					audit.Log(audit.FetchEvent{
-						UserID:       roleId,
-						ClientIP:     clientIP,
-						ResourceID:   resourceId,
-						Version:      secretVersion,
-						Success:      false,
-						ErrorMessage: "secret has expired",
-					})
-					respondWithError(writer, http.StatusNotFound, map[string]string{"message": "secret has expired"})
-					return
-				}
-
-				http.Error(writer, err.Error(), http.StatusInternalServerError)
-				return
-			}
-
-			audit.Log(audit.FetchEvent{
-				UserID:     roleId,
-				ClientIP:   clientIP,
-				ResourceID: resourceId,
-				Version:    secretVersion,
-				Success:    true,
-			})
-			_, _ = writer.Write(secret.Value)
-		},
-	).Methods("GET")
-
-	// POST /secrets/{account}/{kind}/{identifier}?expirations - Expire a secret (clear expires_at)
-	// This triggers early rotation by clearing the expiration timestamp
-	secretsRouter.HandleFunc(
-		"/{account}/{kind}/{identifier:.+}",
-		func(writer http.ResponseWriter, request *http.Request) {
-			vars := mux.Vars(request)
-			account := vars["account"]
-			kind := vars["kind"]
-			identifier, err := url.PathUnescape(vars["identifier"])
-			if err != nil {
-				http.Error(writer, err.Error(), http.StatusBadRequest)
-				return
-			}
-
-			// Only variables can be expired
-			if kind != "variable" {
-				respondWithError(writer, http.StatusUnprocessableEntity, map[string]string{
-					"error": fmt.Sprintf("Invalid secret kind: %s", kind),
-				})
-				return
-			}
-
-			resourceId := fmt.Sprintf("%s:%s:%s", account, kind, identifier)
-
-			tokenInfo, _ := middleware.GetTokenInfo(request.Context())
-			roleId := tokenInfo.RoleID
-
-			allowed := isRoleAllowedTo(db, roleId, "update", resourceId)
-			if !allowed {
-				http.Error(writer, "role does not have update permissions on secret", http.StatusForbidden)
-				return
-			}
-
-			// Clear expires_at on all versions of this secret
-			tx := db.Model(&model.Secret{}).Where("resource_id = ?", resourceId).Update("expires_at", nil)
-			if tx.Error != nil {
-				respondWithError(writer, http.StatusInternalServerError, map[string]string{"message": tx.Error.Error()})
-				return
-			}
-
-			writer.WriteHeader(http.StatusCreated)
-		},
-	).Methods("POST").Queries("expirations", "")
-
-	// POST /secrets/{account}/{kind}/{identifier} - Create/update a secret value
-	secretsRouter.HandleFunc(
-		"/{account}/{kind}/{identifier:.+}",
-		func(writer http.ResponseWriter, request *http.Request) {
-			newSecretValue, err := io.ReadAll(request.Body)
-			defer func() { _ = request.Body.Close() }()
-			if err != nil {
-				http.Error(writer, err.Error(), http.StatusBadRequest)
-				return
-			}
-
-			vars := mux.Vars(request)
-			account := vars["account"]
-			kind := vars["kind"]
-			identifier, err := url.PathUnescape(vars["identifier"])
-			if err != nil {
-				http.Error(writer, err.Error(), http.StatusBadRequest)
-				return
-			}
-
-			resourceId := fmt.Sprintf("%s:%s:%s", account, kind, identifier)
-
-			// Comes from auth
-			tokenInfo, _ := middleware.GetTokenInfo(request.Context())
-			roleId := tokenInfo.RoleID
-			clientIP := request.RemoteAddr
-			if forwarded := request.Header.Get("X-Forwarded-For"); forwarded != "" {
-				clientIP = forwarded
-			}
-
-			// TODO: turn this into "#authorize(action)" utility function
-			allowed := isRoleAllowedTo(
-				db,
-				roleId,
-				"update",
-				resourceId,
-			)
-			if !allowed {
-				audit.Log(audit.UpdateEvent{
+			if errors.Is(err, store.ErrSecretExpired) {
+				audit.Log(audit.FetchEvent{
 					UserID:       roleId,
 					ClientIP:     clientIP,
 					ResourceID:   resourceId,
+					Version:      secretVersion,
 					Success:      false,
-					ErrorMessage: "permission denied",
+					ErrorMessage: "secret has expired",
 				})
-				http.Error(writer, "role does not have update permissions on secret", http.StatusForbidden)
+				respondWithError(w, http.StatusNotFound, map[string]string{"message": "secret has expired"})
 				return
 			}
 
-			// TODO: There's definitely a better model abstraction here
-			tx := db.Create(&model.Secret{
-				ResourceId: resourceId,
-				Value:      newSecretValue,
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		audit.Log(audit.FetchEvent{
+			UserID:     roleId,
+			ClientIP:   clientIP,
+			ResourceID: resourceId,
+			Version:    secretVersion,
+			Success:    true,
+		})
+		_, _ = w.Write(secret.Value)
+	}
+}
+
+func handleExpireSecret(secretsStore store.SecretsStore, authzStore store.AuthzStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		account := vars["account"]
+		kind := vars["kind"]
+		identifier, err := url.PathUnescape(vars["identifier"])
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if kind != "variable" {
+			respondWithError(w, http.StatusUnprocessableEntity, map[string]string{
+				"error": fmt.Sprintf("Invalid secret kind: %s", kind),
 			})
-			err = tx.Error
-			if err != nil {
-				audit.Log(audit.UpdateEvent{
-					UserID:       roleId,
-					ClientIP:     clientIP,
-					ResourceID:   resourceId,
-					Success:      false,
-					ErrorMessage: err.Error(),
-				})
-				respondWithError(writer, http.StatusInternalServerError, map[string]string{"message": err.Error()})
-				return
-			}
+			return
+		}
 
+		resourceId := fmt.Sprintf("%s:%s:%s", account, kind, identifier)
+
+		id, _ := identity.Get(r.Context())
+		roleId := id.RoleID
+
+		if !authzStore.IsRoleAllowedTo(roleId, "update", resourceId) {
+			http.Error(w, "role does not have update permissions on secret", http.StatusForbidden)
+			return
+		}
+
+		if err := secretsStore.ExpireSecret(resourceId); err != nil {
+			respondWithError(w, http.StatusInternalServerError, map[string]string{"message": err.Error()})
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+	}
+}
+
+func handleCreateSecret(secretsStore store.SecretsStore, authzStore store.AuthzStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		newSecretValue, err := io.ReadAll(r.Body)
+		defer func() { _ = r.Body.Close() }()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		vars := mux.Vars(r)
+		account := vars["account"]
+		kind := vars["kind"]
+		identifier, err := url.PathUnescape(vars["identifier"])
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		resourceId := fmt.Sprintf("%s:%s:%s", account, kind, identifier)
+
+		id, _ := identity.Get(r.Context())
+		roleId := id.RoleID
+		clientIP := r.RemoteAddr
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			clientIP = forwarded
+		}
+
+		if !authzStore.IsRoleAllowedTo(roleId, "update", resourceId) {
 			audit.Log(audit.UpdateEvent{
-				UserID:     roleId,
-				ClientIP:   clientIP,
-				ResourceID: resourceId,
-				Success:    true,
+				UserID:       roleId,
+				ClientIP:     clientIP,
+				ResourceID:   resourceId,
+				Success:      false,
+				ErrorMessage: "permission denied",
 			})
-			writer.WriteHeader(http.StatusCreated)
-		},
-	).Methods("POST")
+			http.Error(w, "role does not have update permissions on secret", http.StatusForbidden)
+			return
+		}
 
-	// POST /secrets/{account}/values - Batch update secrets
-	secretsRouter.HandleFunc(
-		"/{account}/values",
-		handleBatchUpdateSecrets(db),
-	).Methods("POST")
+		if err := secretsStore.CreateSecret(resourceId, newSecretValue); err != nil {
+			audit.Log(audit.UpdateEvent{
+				UserID:       roleId,
+				ClientIP:     clientIP,
+				ResourceID:   resourceId,
+				Success:      false,
+				ErrorMessage: err.Error(),
+			})
+			respondWithError(w, http.StatusInternalServerError, map[string]string{"message": err.Error()})
+			return
+		}
+
+		audit.Log(audit.UpdateEvent{
+			UserID:     roleId,
+			ClientIP:   clientIP,
+			ResourceID: resourceId,
+			Success:    true,
+		})
+		w.WriteHeader(http.StatusCreated)
+	}
 }
 
 // BatchSecretRequest represents a request to update multiple secrets
@@ -353,20 +302,18 @@ type BatchSecretResponse struct {
 	Errors  map[string]string `json:"errors,omitempty"`
 }
 
-func handleBatchUpdateSecrets(db *gorm.DB) http.HandlerFunc {
+func handleBatchUpdateSecrets(secretsStore store.SecretsStore, authzStore store.AuthzStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		account := vars["account"]
 
-		// Get role from auth context
-		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
-		roleId := tokenInfo.RoleID
+		id, _ := identity.Get(r.Context())
+		roleId := id.RoleID
 		clientIP := r.RemoteAddr
 		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 			clientIP = forwarded
 		}
 
-		// Parse request body
 		var req BatchSecretRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			respondWithError(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
@@ -384,16 +331,13 @@ func handleBatchUpdateSecrets(db *gorm.DB) http.HandlerFunc {
 			Errors:  make(map[string]string),
 		}
 
-		// Process each secret
 		for varId, value := range req.Secrets {
-			// Build full resource ID if not already qualified
 			resourceId := varId
 			if !strings.Contains(varId, ":") {
 				resourceId = account + ":variable:" + varId
 			}
 
-			// Check permission
-			if !isRoleAllowedTo(db, roleId, "update", resourceId) {
+			if !authzStore.IsRoleAllowedTo(roleId, "update", resourceId) {
 				response.Errors[varId] = "permission denied"
 				audit.Log(audit.UpdateEvent{
 					UserID:       roleId,
@@ -405,13 +349,7 @@ func handleBatchUpdateSecrets(db *gorm.DB) http.HandlerFunc {
 				continue
 			}
 
-			// Update the secret
-			err := db.Create(&model.Secret{
-				ResourceId: resourceId,
-				Value:      []byte(value),
-			}).Error
-
-			if err != nil {
+			if err := secretsStore.CreateSecret(resourceId, []byte(value)); err != nil {
 				response.Errors[varId] = err.Error()
 				audit.Log(audit.UpdateEvent{
 					UserID:       roleId,
@@ -431,7 +369,6 @@ func handleBatchUpdateSecrets(db *gorm.DB) http.HandlerFunc {
 			}
 		}
 
-		// Return 207 Multi-Status if there were any errors, 201 if all succeeded
 		statusCode := http.StatusCreated
 		if len(response.Errors) > 0 {
 			statusCode = http.StatusMultiStatus

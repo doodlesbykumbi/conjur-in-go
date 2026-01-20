@@ -5,7 +5,40 @@
 //
 // # Policy Format
 //
-// Policies are written in YAML and can define:
+// Conjur policies are written in YAML with custom tags to define resources:
+//
+//   - !policy
+//     id: myapp
+//     body:
+//   - !user alice
+//   - !group
+//     id: developers
+//   - !variable
+//     id: db-password
+//   - !permit
+//     role: !group developers
+//     privileges: [read, execute]
+//     resource: !variable db-password
+//
+// # Parsing Policies
+//
+// Use the parser package to parse policy YAML:
+//
+//	import "github.com/doodlesbykumbi/conjur-in-go/pkg/policy/parser"
+//
+//	statements, err := parser.Parse(reader)
+//
+// # Loading Policies
+//
+// Use the loader package to apply policies to a database:
+//
+//	import "github.com/doodlesbykumbi/conjur-in-go/pkg/policy/loader"
+//
+//	store := loader.NewGormStore(db, cipher)
+//	l := loader.NewLoader(store, "myorg")
+//	result, err := l.LoadFromString(policyYAML)
+//
+// # Supported Resource Types
 //
 //   - Users: Human identities (!user)
 //   - Hosts: Machine identities (!host)
@@ -13,8 +46,15 @@
 //   - Layers: Collections of hosts (!layer)
 //   - Variables: Secrets storage (!variable)
 //   - Policies: Nested policy namespaces (!policy)
-//   - Permissions: Access grants (!permit, !deny)
-//   - Memberships: Role relationships (!grant)
+//   - Webservice: Web service endpoint
+//   - HostFactory: Factory for creating hosts
+//
+// # Supported Statements
+//
+//   - Grant: Assign role membership
+//   - Permit: Grant permissions
+//   - Deny: Revoke permissions
+//   - Delete: Remove resources
 //
 // # Example Policy
 //

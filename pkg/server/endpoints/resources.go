@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
-	"gorm.io/gorm"
 
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/audit"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/identity"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/middleware"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/store"
 )
 
 // ResourceResponse represents a resource in the API response
@@ -41,32 +41,31 @@ type SecretMetaResponse struct {
 
 // RegisterResourcesEndpoints registers the resources API endpoints
 func RegisterResourcesEndpoints(s *server.Server) {
-	db := s.DB
+	resourcesStore := s.ResourcesStore
+	authzStore := s.AuthzStore
 
 	resourcesRouter := s.Router.PathPrefix("/resources").Subrouter()
 	resourcesRouter.Use(s.JWTMiddleware.Middleware)
 
 	// GET /resources/{account} - List all resources
 	// GET /resources/{account}/{kind} - List resources by kind
-	resourcesRouter.HandleFunc("/{account}", handleListResources(db)).Methods("GET")
-	resourcesRouter.HandleFunc("/{account}/", handleListResources(db)).Methods("GET")
-	resourcesRouter.HandleFunc("/{account}/{kind}", handleListResources(db)).Methods("GET")
+	resourcesRouter.HandleFunc("/{account}", handleListResources(resourcesStore)).Methods("GET")
+	resourcesRouter.HandleFunc("/{account}/", handleListResources(resourcesStore)).Methods("GET")
+	resourcesRouter.HandleFunc("/{account}/{kind}", handleListResources(resourcesStore)).Methods("GET")
 
 	// GET /resources/{account}/{kind}/{identifier} - Show single resource
-	resourcesRouter.HandleFunc("/{account}/{kind}/{identifier:.+}", handleShowResource(db)).Methods("GET")
+	resourcesRouter.HandleFunc("/{account}/{kind}/{identifier:.+}", handleShowResource(resourcesStore, authzStore)).Methods("GET")
 }
 
-func handleListResources(db *gorm.DB) http.HandlerFunc {
+func handleListResources(resourcesStore store.ResourcesStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		account := vars["account"]
 		kind := vars["kind"]
 
-		// Get role from auth context
-		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
-		roleId := tokenInfo.RoleID
+		id, _ := identity.Get(r.Context())
+		roleId := id.RoleID
 
-		// Parse query parameters - kind can come from URL path or query param
 		if kindParam := r.URL.Query().Get("kind"); kindParam != "" {
 			kind = kindParam
 		}
@@ -85,23 +84,27 @@ func handleListResources(db *gorm.DB) http.HandlerFunc {
 			}
 		}
 
-		// Check if count only is requested
 		if r.URL.Query().Get("count") == "true" {
-			count := countResources(db, account, kind, roleId, search)
+			count := resourcesStore.CountResources(account, kind, roleId, search)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
 			return
 		}
 
-		// Fetch resources
-		resources := listResources(db, account, kind, roleId, search, limit, offset)
+		resources := resourcesStore.ListResources(account, kind, roleId, search, limit, offset)
+
+		// Convert to response format
+		responses := make([]ResourceResponse, 0, len(resources))
+		for _, res := range resources {
+			responses = append(responses, toResourceResponse(res))
+		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resources)
+		_ = json.NewEncoder(w).Encode(responses)
 	}
 }
 
-func handleShowResource(db *gorm.DB) http.HandlerFunc {
+func handleShowResource(resourcesStore store.ResourcesStore, authzStore store.AuthzStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		account := vars["account"]
@@ -110,11 +113,9 @@ func handleShowResource(db *gorm.DB) http.HandlerFunc {
 
 		resourceId := account + ":" + kind + ":" + identifier
 
-		// Get role from auth context (the authenticated user)
-		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
-		authRoleId := tokenInfo.RoleID
+		id, _ := identity.Get(r.Context())
+		authRoleId := id.RoleID
 
-		// Get client IP for audit
 		clientIP := r.RemoteAddr
 		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 			clientIP = forwarded
@@ -122,24 +123,19 @@ func handleShowResource(db *gorm.DB) http.HandlerFunc {
 
 		// Check if this is a permission check request
 		if r.URL.Query().Get("check") == "true" {
-			handlePermissionCheck(db, w, r, account, resourceId, authRoleId, clientIP)
+			handlePermissionCheck(resourcesStore, authzStore, w, r, account, resourceId, authRoleId, clientIP)
 			return
 		}
 
 		// Check if this is a permitted_roles request
 		if _, hasPermittedRoles := r.URL.Query()["permitted_roles"]; hasPermittedRoles {
-			handlePermittedRoles(db, w, r, resourceId)
+			handlePermittedRoles(resourcesStore, w, r, resourceId)
 			return
 		}
 
 		// Check if user can see this resource
-		var canSee bool
-		db.Raw(`SELECT is_resource_visible(?, ?)`, resourceId, authRoleId).Scan(&canSee)
-		if !canSee {
-			// Check if resource exists at all
-			var exists bool
-			db.Raw(`SELECT EXISTS(SELECT 1 FROM resources WHERE resource_id = ?)`, resourceId).Scan(&exists)
-			if !exists {
+		if !resourcesStore.IsResourceVisible(resourceId, authRoleId) {
+			if !resourcesStore.ResourceExists(resourceId) {
 				respondWithError(w, http.StatusNotFound, map[string]string{"error": "Resource not found"})
 			} else {
 				respondWithError(w, http.StatusForbidden, map[string]string{"error": "Forbidden"})
@@ -147,56 +143,39 @@ func handleShowResource(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		resource := fetchResource(db, resourceId)
+		resource := resourcesStore.FetchResource(resourceId)
 		if resource == nil {
 			respondWithError(w, http.StatusNotFound, map[string]string{"error": "Resource not found"})
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resource)
+		_ = json.NewEncoder(w).Encode(toResourceResponse(*resource))
 	}
 }
 
-// handlePermittedRoles returns all roles that have a given privilege on a resource
-// GET /resources/{account}/{kind}/{identifier}?permitted_roles=true&privilege={privilege}
-func handlePermittedRoles(db *gorm.DB, w http.ResponseWriter, r *http.Request, resourceId string) {
+func handlePermittedRoles(resourcesStore store.ResourcesStore, w http.ResponseWriter, r *http.Request, resourceId string) {
 	privilege := r.URL.Query().Get("privilege")
 	if privilege == "" {
 		respondWithError(w, http.StatusBadRequest, map[string]string{"error": "privilege parameter is required"})
 		return
 	}
 
-	// Use the roles_that_can function
-	type roleRow struct {
-		RoleID string `gorm:"column:role_id"`
-	}
-	var rows []roleRow
-	db.Raw(`SELECT role_id FROM roles_that_can(?, ?)`, privilege, resourceId).Scan(&rows)
-
-	roleIds := make([]string, 0, len(rows))
-	for _, row := range rows {
-		roleIds = append(roleIds, row.RoleID)
-	}
+	roleIds := resourcesStore.PermittedRoles(privilege, resourceId)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(roleIds)
 }
 
-// handlePermissionCheck implements the permission check endpoint
-// GET /resources/{account}/{kind}/{identifier}?check=true&privilege={privilege}&role={role}
-// Returns 204 if allowed, 404 if not allowed, 403 if role doesn't exist
-func handlePermissionCheck(db *gorm.DB, w http.ResponseWriter, r *http.Request, account, resourceId, authRoleId, clientIP string) {
+func handlePermissionCheck(resourcesStore store.ResourcesStore, authzStore store.AuthzStore, w http.ResponseWriter, r *http.Request, account, resourceId, authRoleId, clientIP string) {
 	privilege := r.URL.Query().Get("privilege")
 	if privilege == "" {
 		respondWithError(w, http.StatusBadRequest, map[string]string{"error": "privilege parameter is required"})
 		return
 	}
 
-	// Determine which role to check - either specified role or authenticated user
 	checkRoleId := authRoleId
 	if roleParam := r.URL.Query().Get("role"); roleParam != "" {
-		// If role doesn't contain ":", assume it's relative to account
 		if !strings.Contains(roleParam, ":") {
 			checkRoleId = account + ":user:" + roleParam
 		} else {
@@ -204,10 +183,7 @@ func handlePermissionCheck(db *gorm.DB, w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
-	// Check if the resource exists and is visible to the authenticated user
-	var resourceExists bool
-	db.Raw(`SELECT EXISTS(SELECT 1 FROM resources WHERE resource_id = ?)`, resourceId).Scan(&resourceExists)
-	if !resourceExists {
+	if !resourcesStore.ResourceExists(resourceId) {
 		audit.Log(audit.CheckEvent{
 			UserID:       authRoleId,
 			ClientIP:     clientIP,
@@ -220,10 +196,7 @@ func handlePermissionCheck(db *gorm.DB, w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	// Check if the role to check exists
-	var roleExists bool
-	db.Raw(`SELECT EXISTS(SELECT 1 FROM roles WHERE role_id = ?)`, checkRoleId).Scan(&roleExists)
-	if !roleExists {
+	if !resourcesStore.RoleExists(checkRoleId) {
 		audit.Log(audit.CheckEvent{
 			UserID:       authRoleId,
 			ClientIP:     clientIP,
@@ -236,10 +209,8 @@ func handlePermissionCheck(db *gorm.DB, w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	// Check if the role has the privilege on the resource
-	allowed := isRoleAllowedTo(db, checkRoleId, privilege, resourceId)
+	allowed := authzStore.IsRoleAllowedTo(checkRoleId, privilege, resourceId)
 
-	// Audit log the check
 	audit.Log(audit.CheckEvent{
 		UserID:     authRoleId,
 		ClientIP:   clientIP,
@@ -249,196 +220,35 @@ func handlePermissionCheck(db *gorm.DB, w http.ResponseWriter, r *http.Request, 
 	})
 
 	if allowed {
-		w.WriteHeader(http.StatusNoContent) // 204
+		w.WriteHeader(http.StatusNoContent)
 	} else {
-		w.WriteHeader(http.StatusNotFound) // 404
+		w.WriteHeader(http.StatusNotFound)
 	}
 }
 
-func listResources(db *gorm.DB, account, kind, roleId, search string, limit, offset int) []ResourceResponse {
-	// Build query using visible_resources function
-	query := `
-		SELECT resource_id, owner_id, created_at
-		FROM visible_resources(?)
-		WHERE account(resource_id) = ?
-	`
-	args := []interface{}{roleId, account}
-
-	if kind != "" {
-		query += ` AND kind(resource_id) = ?`
-		args = append(args, kind)
+func toResourceResponse(res store.Resource) ResourceResponse {
+	response := ResourceResponse{
+		ID:          res.ID,
+		Owner:       res.Owner,
+		Annotations: res.Annotations,
 	}
 
-	if search != "" {
-		query += ` AND resource_id ILIKE ?`
-		args = append(args, "%"+search+"%")
+	response.Permissions = make([]PermissionResponse, 0, len(res.Permissions))
+	for _, p := range res.Permissions {
+		response.Permissions = append(response.Permissions, PermissionResponse{
+			Privilege: p.Privilege,
+			Role:      p.Role,
+			Policy:    p.Policy,
+		})
 	}
 
-	query += ` ORDER BY resource_id`
-
-	if limit > 0 {
-		query += ` LIMIT ?`
-		args = append(args, limit)
-	}
-	if offset > 0 {
-		query += ` OFFSET ?`
-		args = append(args, offset)
+	response.Secrets = make([]SecretMetaResponse, 0, len(res.Secrets))
+	for _, s := range res.Secrets {
+		response.Secrets = append(response.Secrets, SecretMetaResponse{
+			Version:   s.Version,
+			ExpiresAt: s.ExpiresAt,
+		})
 	}
 
-	type resourceRow struct {
-		ResourceId string
-		OwnerId    string
-		CreatedAt  *string
-	}
-
-	var rows []resourceRow
-	db.Raw(query, args...).Scan(&rows)
-
-	resources := make([]ResourceResponse, 0, len(rows))
-	for _, row := range rows {
-		resource := ResourceResponse{
-			ID:    row.ResourceId,
-			Owner: row.OwnerId,
-		}
-
-		// Fetch permissions
-		resource.Permissions = fetchPermissions(db, row.ResourceId)
-
-		// Fetch annotations
-		resource.Annotations = fetchAnnotations(db, row.ResourceId)
-
-		// Fetch secret metadata for variables
-		if strings.Contains(row.ResourceId, ":variable:") {
-			resource.Secrets = fetchSecretMeta(db, row.ResourceId)
-		}
-
-		resources = append(resources, resource)
-	}
-
-	return resources
-}
-
-func countResources(db *gorm.DB, account, kind, roleId, search string) int {
-	query := `
-		SELECT COUNT(*)
-		FROM visible_resources(?)
-		WHERE account(resource_id) = ?
-	`
-	args := []interface{}{roleId, account}
-
-	if kind != "" {
-		query += ` AND kind(resource_id) = ?`
-		args = append(args, kind)
-	}
-
-	if search != "" {
-		query += ` AND resource_id ILIKE ?`
-		args = append(args, "%"+search+"%")
-	}
-
-	var count int
-	db.Raw(query, args...).Scan(&count)
-	return count
-}
-
-func fetchResource(db *gorm.DB, resourceId string) *ResourceResponse {
-	type resourceRow struct {
-		ResourceId string
-		OwnerId    string
-		CreatedAt  *string
-	}
-
-	var row resourceRow
-	result := db.Raw(`
-		SELECT resource_id, owner_id, created_at
-		FROM resources WHERE resource_id = ?
-	`, resourceId).Scan(&row)
-
-	if result.Error != nil || row.ResourceId == "" {
-		return nil
-	}
-
-	resource := &ResourceResponse{
-		ID:    row.ResourceId,
-		Owner: row.OwnerId,
-	}
-
-	resource.Permissions = fetchPermissions(db, resourceId)
-	resource.Annotations = fetchAnnotations(db, resourceId)
-
-	if strings.Contains(resourceId, ":variable:") {
-		resource.Secrets = fetchSecretMeta(db, resourceId)
-	}
-
-	return resource
-}
-
-func fetchPermissions(db *gorm.DB, resourceId string) []PermissionResponse {
-	type permRow struct {
-		Privilege string
-		RoleId    string
-		PolicyId  *string
-	}
-
-	var rows []permRow
-	db.Raw(`
-		SELECT privilege, role_id, policy_id
-		FROM permissions WHERE resource_id = ?
-		ORDER BY role_id, privilege
-	`, resourceId).Scan(&rows)
-
-	perms := make([]PermissionResponse, 0, len(rows))
-	for _, row := range rows {
-		perm := PermissionResponse{
-			Privilege: row.Privilege,
-			Role:      row.RoleId,
-		}
-		if row.PolicyId != nil {
-			perm.Policy = *row.PolicyId
-		}
-		perms = append(perms, perm)
-	}
-	return perms
-}
-
-func fetchAnnotations(db *gorm.DB, resourceId string) map[string]string {
-	type annRow struct {
-		Name  string
-		Value string
-	}
-
-	var rows []annRow
-	db.Raw(`
-		SELECT name, value FROM annotations WHERE resource_id = ?
-	`, resourceId).Scan(&rows)
-
-	annotations := make(map[string]string)
-	for _, row := range rows {
-		annotations[row.Name] = row.Value
-	}
-	return annotations
-}
-
-func fetchSecretMeta(db *gorm.DB, resourceId string) []SecretMetaResponse {
-	type secretRow struct {
-		Version   int
-		ExpiresAt *string
-	}
-
-	var rows []secretRow
-	db.Raw(`
-		SELECT version, expires_at FROM secrets WHERE resource_id = ? ORDER BY version
-	`, resourceId).Scan(&rows)
-
-	secrets := make([]SecretMetaResponse, 0, len(rows))
-	for _, row := range rows {
-		secret := SecretMetaResponse{
-			Version: row.Version,
-		}
-		if row.ExpiresAt != nil {
-			secret.ExpiresAt = *row.ExpiresAt
-		}
-		secrets = append(secrets, secret)
-	}
-	return secrets
+	return response
 }

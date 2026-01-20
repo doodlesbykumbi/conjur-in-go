@@ -10,15 +10,15 @@ import (
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/identity"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/model"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/policy"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/policy/loader"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/middleware"
 )
 
 // PolicyLoadResponse is the response from loading a policy
 type PolicyLoadResponse struct {
-	CreatedRoles map[string]policy.RoleCredentials `json:"created_roles"`
+	CreatedRoles map[string]loader.RoleCredentials `json:"created_roles"`
 	Version      int                               `json:"version"`
 	DryRun       bool                              `json:"dry_run,omitempty"`
 }
@@ -61,8 +61,8 @@ func handleGetPolicy(db *gorm.DB) http.HandlerFunc {
 		policyID := account + ":policy:" + identifier
 
 		// Get role from auth context
-		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
-		roleId := tokenInfo.RoleID
+		id, _ := identity.Get(r.Context())
+		roleId := id.RoleID
 
 		// Check if user can see this policy
 		var canSee bool
@@ -171,13 +171,14 @@ func handlePolicyLoad(s *server.Server) http.HandlerFunc {
 		dryRun := r.URL.Query().Get("dry_run") == "true"
 
 		// Load policy using the shared loader with versioning info
-		loader := policy.NewLoader(s.DB, s.Cipher, account).
+		store := loader.NewGormStore(s.DB, s.Cipher)
+		l := loader.NewLoader(store, account).
 			WithPolicyID(policyID).
 			WithRoleID(roleID).
 			WithClientIP(clientIP).
 			WithDeletePermitted(deletePermitted).
 			WithDryRun(dryRun)
-		result, err := loader.LoadFromString(string(body))
+		result, err := l.LoadFromString(string(body))
 		if err != nil {
 			http.Error(w, "Failed to load policy: "+err.Error(), http.StatusUnprocessableEntity)
 			return

@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
-	"gorm.io/gorm"
 
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/identity"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/middleware"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/store"
 )
 
 // RoleResponse represents a role in the API response
@@ -31,23 +31,23 @@ type MembershipGrant struct {
 
 // RegisterRolesEndpoints registers the roles API endpoints
 func RegisterRolesEndpoints(s *server.Server) {
-	db := s.DB
+	rolesStore := s.RolesStore
+	authzStore := s.AuthzStore
 
 	rolesRouter := s.Router.PathPrefix("/roles").Subrouter()
 	rolesRouter.Use(s.JWTMiddleware.Middleware)
 
 	// GET /roles/{account}/{kind}/{identifier} - Show role
-	// Also handles ?members, ?memberships, ?all query params
-	rolesRouter.HandleFunc("/{account}/{kind}/{identifier:.+}", handleShowRole(db)).Methods("GET")
+	rolesRouter.HandleFunc("/{account}/{kind}/{identifier:.+}", handleShowRole(rolesStore)).Methods("GET")
 
 	// POST /roles/{account}/{kind}/{identifier}?members&member={member_id} - Add member
-	rolesRouter.HandleFunc("/{account}/{kind}/{identifier:.+}", handleAddMember(db)).Methods("POST").Queries("members", "")
+	rolesRouter.HandleFunc("/{account}/{kind}/{identifier:.+}", handleAddMember(rolesStore, authzStore)).Methods("POST").Queries("members", "")
 
 	// DELETE /roles/{account}/{kind}/{identifier}?members&member={member_id} - Remove member
-	rolesRouter.HandleFunc("/{account}/{kind}/{identifier:.+}", handleDeleteMember(db)).Methods("DELETE").Queries("members", "")
+	rolesRouter.HandleFunc("/{account}/{kind}/{identifier:.+}", handleDeleteMember(rolesStore, authzStore)).Methods("DELETE").Queries("members", "")
 }
 
-func handleShowRole(db *gorm.DB) http.HandlerFunc {
+func handleShowRole(rolesStore store.RolesStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		account := vars["account"]
@@ -56,45 +56,40 @@ func handleShowRole(db *gorm.DB) http.HandlerFunc {
 
 		roleId := account + ":" + kind + ":" + identifier
 
-		// Get authenticated role from context
-		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
-		authRoleId := tokenInfo.RoleID
+		id, _ := identity.Get(r.Context())
+		authRoleId := id.RoleID
 
-		// Check query parameters for specific actions
 		if _, hasMembers := r.URL.Query()["members"]; hasMembers {
-			handleRoleMembers(db, w, r, roleId, authRoleId)
+			handleRoleMembers(rolesStore, w, r, roleId)
 			return
 		}
 
 		if _, hasMemberships := r.URL.Query()["memberships"]; hasMemberships {
-			handleRoleMemberships(db, w, r, roleId, authRoleId)
+			handleRoleMemberships(rolesStore, w, r, roleId)
 			return
 		}
 
 		if _, hasAll := r.URL.Query()["all"]; hasAll {
-			handleAllMemberships(db, w, r, roleId, authRoleId)
+			handleAllMemberships(rolesStore, w, r, roleId)
 			return
 		}
 
-		// Check if role exists and is visible
-		var exists bool
-		db.Raw(`SELECT EXISTS(SELECT 1 FROM roles WHERE role_id = ?)`, roleId).Scan(&exists)
-		if !exists {
+		_ = authRoleId // May be used for visibility checks in future
+
+		if !rolesStore.RoleExists(roleId) {
 			respondWithError(w, http.StatusNotFound, map[string]string{"error": "Role not found"})
 			return
 		}
 
-		// Fetch role with memberships
-		role := fetchRole(db, roleId)
+		role := rolesStore.FetchRole(roleId)
+		response := toRoleResponse(role)
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(role)
+		_ = json.NewEncoder(w).Encode(response)
 	}
 }
 
-// handleRoleMembers returns the members of a role (who is IN this role)
-func handleRoleMembers(db *gorm.DB, w http.ResponseWriter, r *http.Request, roleId, authRoleId string) {
-	// Parse query parameters
+func handleRoleMembers(rolesStore store.RolesStore, w http.ResponseWriter, r *http.Request, roleId string) {
 	limit := 0
 	offset := 0
 	search := r.URL.Query().Get("search")
@@ -107,200 +102,50 @@ func handleRoleMembers(db *gorm.DB, w http.ResponseWriter, r *http.Request, role
 		offset, _ = strconv.Atoi(offsetStr)
 	}
 
-	// Check if count only
 	if r.URL.Query().Get("count") != "" {
-		count := countRoleMembers(db, roleId, search, kind)
+		count := rolesStore.CountRoleMembers(roleId, search, kind)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
 		return
 	}
 
-	members := fetchRoleMembers(db, roleId, search, kind, limit, offset)
+	members := rolesStore.FetchRoleMembers(roleId, search, kind, limit, offset)
+	response := toMembershipGrants(members)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(members)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
-// handleRoleMemberships returns the direct memberships of a role (what roles is this role a member of)
-func handleRoleMemberships(db *gorm.DB, w http.ResponseWriter, r *http.Request, roleId, authRoleId string) {
-	// Check if count only
+func handleRoleMemberships(rolesStore store.RolesStore, w http.ResponseWriter, r *http.Request, roleId string) {
 	if r.URL.Query().Get("count") != "" {
-		count := countRoleMemberships(db, roleId)
+		count := rolesStore.CountRoleMemberships(roleId)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
 		return
 	}
 
-	memberships := fetchRoleMemberships(db, roleId)
+	memberships := rolesStore.FetchRoleMemberships(roleId)
+	response := toMembershipGrants(memberships)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(memberships)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
-// handleAllMemberships returns all memberships recursively
-func handleAllMemberships(db *gorm.DB, w http.ResponseWriter, r *http.Request, roleId, authRoleId string) {
-	// Check if count only
+func handleAllMemberships(rolesStore store.RolesStore, w http.ResponseWriter, r *http.Request, roleId string) {
 	if _, hasCount := r.URL.Query()["count"]; hasCount {
-		count := countAllMemberships(db, roleId)
+		count := rolesStore.CountAllMemberships(roleId)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
 		return
 	}
 
-	// Use the all_roles function to get recursive memberships
-	type roleRow struct {
-		RoleId string `gorm:"column:role_id"`
-	}
-	var rows []roleRow
-	db.Raw(`SELECT role_id FROM all_roles(?)`, roleId).Scan(&rows)
-
-	roleIds := make([]string, 0, len(rows))
-	for _, row := range rows {
-		roleIds = append(roleIds, row.RoleId)
-	}
+	roleIds := rolesStore.FetchAllMemberships(roleId)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(roleIds)
 }
 
-func fetchRole(db *gorm.DB, roleId string) RoleResponse {
-	role := RoleResponse{
-		ID: roleId,
-	}
-
-	// Fetch memberships (roles this role is a member of)
-	role.Members = fetchRoleMemberships(db, roleId)
-
-	return role
-}
-
-func fetchRoleMembers(db *gorm.DB, roleId, search, kind string, limit, offset int) []MembershipGrant {
-	query := `
-		SELECT role_id, member_id, admin_option, ownership, policy_id
-		FROM role_memberships
-		WHERE role_id = ?
-	`
-	args := []interface{}{roleId}
-
-	if search != "" {
-		query += ` AND member_id ILIKE ?`
-		args = append(args, "%"+search+"%")
-	}
-
-	if kind != "" {
-		query += ` AND kind(member_id) = ?`
-		args = append(args, kind)
-	}
-
-	query += ` ORDER BY member_id`
-
-	if limit > 0 {
-		query += ` LIMIT ?`
-		args = append(args, limit)
-	}
-	if offset > 0 {
-		query += ` OFFSET ?`
-		args = append(args, offset)
-	}
-
-	type memberRow struct {
-		RoleId      string
-		MemberId    string
-		AdminOption bool
-		Ownership   bool
-		PolicyId    *string
-	}
-
-	var rows []memberRow
-	db.Raw(query, args...).Scan(&rows)
-
-	members := make([]MembershipGrant, 0, len(rows))
-	for _, row := range rows {
-		grant := MembershipGrant{
-			Role:        row.RoleId,
-			Member:      row.MemberId,
-			AdminOption: row.AdminOption,
-			Ownership:   row.Ownership,
-		}
-		if row.PolicyId != nil {
-			grant.Policy = *row.PolicyId
-		}
-		members = append(members, grant)
-	}
-	return members
-}
-
-func countRoleMembers(db *gorm.DB, roleId, search, kind string) int {
-	query := `SELECT COUNT(*) FROM role_memberships WHERE role_id = ?`
-	args := []interface{}{roleId}
-
-	if search != "" {
-		query += ` AND member_id ILIKE ?`
-		args = append(args, "%"+search+"%")
-	}
-
-	if kind != "" {
-		query += ` AND kind(member_id) = ?`
-		args = append(args, kind)
-	}
-
-	var count int
-	db.Raw(query, args...).Scan(&count)
-	return count
-}
-
-func fetchRoleMemberships(db *gorm.DB, roleId string) []MembershipGrant {
-	type memberRow struct {
-		RoleId      string
-		MemberId    string
-		AdminOption bool
-		Ownership   bool
-		PolicyId    *string
-	}
-
-	var rows []memberRow
-	db.Raw(`
-		SELECT role_id, member_id, admin_option, ownership, policy_id
-		FROM role_memberships
-		WHERE member_id = ?
-		ORDER BY role_id
-	`, roleId).Scan(&rows)
-
-	memberships := make([]MembershipGrant, 0, len(rows))
-	for _, row := range rows {
-		grant := MembershipGrant{
-			Role:        row.RoleId,
-			Member:      row.MemberId,
-			AdminOption: row.AdminOption,
-			Ownership:   row.Ownership,
-		}
-		if row.PolicyId != nil {
-			grant.Policy = *row.PolicyId
-		}
-		memberships = append(memberships, grant)
-	}
-	return memberships
-}
-
-func countRoleMemberships(db *gorm.DB, roleId string) int {
-	var count int
-	db.Raw(`SELECT COUNT(*) FROM role_memberships WHERE member_id = ?`, roleId).Scan(&count)
-	return count
-}
-
-func countAllMemberships(db *gorm.DB, roleId string) int {
-	var count int
-	db.Raw(`SELECT COUNT(*) FROM all_roles(?)`, roleId).Scan(&count)
-	return count
-}
-
-// AddMemberRequest represents a request to add a member to a role
-type AddMemberRequest struct {
-	Member string `json:"member"`
-}
-
-// handleAddMember adds a member to a role
-func handleAddMember(db *gorm.DB) http.HandlerFunc {
+func handleAddMember(rolesStore store.RolesStore, authzStore store.AuthzStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		account := vars["account"]
@@ -309,51 +154,36 @@ func handleAddMember(db *gorm.DB) http.HandlerFunc {
 
 		roleId := account + ":" + kind + ":" + identifier
 
-		// Get member from query param
 		memberId := r.URL.Query().Get("member")
 		if memberId == "" {
 			respondWithError(w, http.StatusBadRequest, map[string]string{"error": "member parameter required"})
 			return
 		}
 
-		// Make full ID if needed
 		if !strings.Contains(memberId, ":") {
 			memberId = account + ":user:" + memberId
 		}
 
-		// Get authenticated role from context
-		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
-		authRoleId := tokenInfo.RoleID
+		id, _ := identity.Get(r.Context())
+		authRoleId := id.RoleID
 
-		// Check if user has create permission on the role's policy
-		var policyId string
-		db.Raw(`SELECT policy_id FROM resources WHERE resource_id = ?`, roleId).Scan(&policyId)
+		policyId := rolesStore.GetRolePolicyID(roleId)
 		if policyId == "" {
 			policyId = roleId
 		}
 
-		if !isRoleAllowedTo(db, authRoleId, "create", policyId) {
+		if !authzStore.IsRoleAllowedTo(authRoleId, "create", policyId) {
 			respondWithError(w, http.StatusForbidden, map[string]string{"error": "Forbidden"})
 			return
 		}
 
-		// Check if member exists
-		var memberExists bool
-		db.Raw(`SELECT EXISTS(SELECT 1 FROM roles WHERE role_id = ?)`, memberId).Scan(&memberExists)
-		if !memberExists {
+		if !rolesStore.RoleExists(memberId) {
 			respondWithError(w, http.StatusNotFound, map[string]string{"error": "Member not found"})
 			return
 		}
 
-		// Add membership
-		result := db.Exec(`
-			INSERT INTO role_memberships (role_id, member_id, admin_option, ownership, policy_id)
-			VALUES (?, ?, false, false, ?)
-			ON CONFLICT DO NOTHING
-		`, roleId, memberId, policyId)
-
-		if result.Error != nil {
-			respondWithError(w, http.StatusInternalServerError, map[string]string{"error": result.Error.Error()})
+		if err := rolesStore.AddMembership(roleId, memberId, policyId); err != nil {
+			respondWithError(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 
@@ -361,8 +191,7 @@ func handleAddMember(db *gorm.DB) http.HandlerFunc {
 	}
 }
 
-// handleDeleteMember removes a member from a role
-func handleDeleteMember(db *gorm.DB) http.HandlerFunc {
+func handleDeleteMember(rolesStore store.RolesStore, authzStore store.AuthzStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		account := vars["account"]
@@ -371,50 +200,63 @@ func handleDeleteMember(db *gorm.DB) http.HandlerFunc {
 
 		roleId := account + ":" + kind + ":" + identifier
 
-		// Get member from query param
 		memberId := r.URL.Query().Get("member")
 		if memberId == "" {
 			respondWithError(w, http.StatusBadRequest, map[string]string{"error": "member parameter required"})
 			return
 		}
 
-		// Make full ID if needed
 		if !strings.Contains(memberId, ":") {
 			memberId = account + ":user:" + memberId
 		}
 
-		// Get authenticated role from context
-		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
-		authRoleId := tokenInfo.RoleID
+		id, _ := identity.Get(r.Context())
+		authRoleId := id.RoleID
 
-		// Check if user has update permission on the role's policy
-		var policyId string
-		db.Raw(`SELECT policy_id FROM resources WHERE resource_id = ?`, roleId).Scan(&policyId)
+		policyId := rolesStore.GetRolePolicyID(roleId)
 		if policyId == "" {
 			policyId = roleId
 		}
 
-		if !isRoleAllowedTo(db, authRoleId, "update", policyId) {
+		if !authzStore.IsRoleAllowedTo(authRoleId, "update", policyId) {
 			respondWithError(w, http.StatusForbidden, map[string]string{"error": "Forbidden"})
 			return
 		}
 
-		// Check if membership exists
-		var membershipExists bool
-		db.Raw(`SELECT EXISTS(SELECT 1 FROM role_memberships WHERE role_id = ? AND member_id = ?)`,
-			roleId, memberId).Scan(&membershipExists)
-		if !membershipExists {
+		if !rolesStore.MembershipExists(roleId, memberId) {
 			respondWithError(w, http.StatusNotFound, map[string]string{"error": "Membership not found"})
 			return
 		}
 
-		// Delete membership
-		result := db.Exec(`DELETE FROM role_memberships WHERE role_id = ? AND member_id = ?`, roleId, memberId)
-		if result.Error != nil {
-			respondWithError(w, http.StatusInternalServerError, map[string]string{"error": result.Error.Error()})
+		if err := rolesStore.DeleteMembership(roleId, memberId); err != nil {
+			respondWithError(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+func toRoleResponse(role *store.Role) RoleResponse {
+	if role == nil {
+		return RoleResponse{}
+	}
+	return RoleResponse{
+		ID:      role.ID,
+		Members: toMembershipGrants(role.Members),
+	}
+}
+
+func toMembershipGrants(memberships []store.Membership) []MembershipGrant {
+	grants := make([]MembershipGrant, 0, len(memberships))
+	for _, m := range memberships {
+		grants = append(grants, MembershipGrant{
+			Role:        m.Role,
+			Member:      m.Member,
+			AdminOption: m.AdminOption,
+			Ownership:   m.Ownership,
+			Policy:      m.Policy,
+		})
+	}
+	return grants
 }

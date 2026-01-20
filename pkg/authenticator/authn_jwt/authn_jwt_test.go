@@ -64,7 +64,7 @@ func TestAuthenticator_Name(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			auth := New(db, cipher, Config{ServiceID: tt.serviceID})
+			auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: tt.serviceID})
 			assert.Equal(t, tt.expected, auth.Name())
 		})
 	}
@@ -81,7 +81,7 @@ func TestConfig_Validation(t *testing.T) {
 		Audience:         "my-app",
 	}
 
-	auth := New(db, cipher, config)
+	auth := NewJWTAuthenticator(db, cipher, config)
 
 	assert.Equal(t, "test-service", auth.config.ServiceID)
 	assert.Equal(t, "https://accounts.google.com", auth.config.ProviderURI)
@@ -117,7 +117,7 @@ func TestLoadInlinePublicKeys(t *testing.T) {
 	// Valid inline JWKS
 	publicKeys := `{"type":"jwks","value":{"keys":[{"kty":"RSA","kid":"test-key","n":"0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw","e":"AQAB"}]}}`
 
-	auth := New(db, cipher, Config{
+	auth := NewJWTAuthenticator(db, cipher, Config{
 		ServiceID:  "test",
 		PublicKeys: publicKeys,
 		Issuer:     "test-issuer",
@@ -138,7 +138,7 @@ func TestLoadInlinePublicKeys_InvalidType(t *testing.T) {
 
 	publicKeys := `{"type":"pem","value":"-----BEGIN PUBLIC KEY-----"}`
 
-	auth := New(db, cipher, Config{
+	auth := NewJWTAuthenticator(db, cipher, Config{
 		ServiceID:  "test",
 		PublicKeys: publicKeys,
 	})
@@ -151,7 +151,7 @@ func TestLoadInlinePublicKeys_InvalidType(t *testing.T) {
 func TestLoadInlinePublicKeys_InvalidJSON(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
 
-	auth := New(db, cipher, Config{
+	auth := NewJWTAuthenticator(db, cipher, Config{
 		ServiceID:  "test",
 		PublicKeys: "not valid json",
 	})
@@ -164,7 +164,7 @@ func TestLoadInlinePublicKeys_InvalidJSON(t *testing.T) {
 func TestAuthenticate_EmptyToken(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
 
-	auth := New(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
 
 	_, err := auth.Authenticate(context.Background(), authenticator.AuthenticatorInput{
 		Account:     "myorg",
@@ -178,7 +178,7 @@ func TestAuthenticate_EmptyToken(t *testing.T) {
 func TestExtractIdentity_TokenAppProperty(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
 
-	auth := New(db, cipher, Config{
+	auth := NewJWTAuthenticator(db, cipher, Config{
 		ServiceID:        "test",
 		TokenAppProperty: "email",
 	})
@@ -198,7 +198,7 @@ func TestExtractIdentity_TokenAppProperty(t *testing.T) {
 func TestExtractIdentity_TokenAppPropertyMissing(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
 
-	auth := New(db, cipher, Config{
+	auth := NewJWTAuthenticator(db, cipher, Config{
 		ServiceID:        "test",
 		TokenAppProperty: "email",
 	})
@@ -217,7 +217,7 @@ func TestExtractIdentity_TokenAppPropertyMissing(t *testing.T) {
 func TestExtractIdentity_LoginFromURL(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
 
-	auth := New(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
 
 	token := &jwt.Token{
 		Claims: jwt.MapClaims{
@@ -233,7 +233,7 @@ func TestExtractIdentity_LoginFromURL(t *testing.T) {
 func TestExtractIdentity_SubClaim(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
 
-	auth := New(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
 
 	token := &jwt.Token{
 		Claims: jwt.MapClaims{
@@ -249,7 +249,7 @@ func TestExtractIdentity_SubClaim(t *testing.T) {
 func TestExtractIdentity_NoIdentity(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
 
-	auth := New(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
 
 	token := &jwt.Token{
 		Claims: jwt.MapClaims{
@@ -275,7 +275,7 @@ func TestNewFromDB(t *testing.T) {
 func TestParseJWKSBody_EmptyKeys(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
 
-	auth := New(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
 
 	err := auth.parseJWKSBody([]byte(`{"keys":[]}`))
 	assert.NoError(t, err)
@@ -288,7 +288,7 @@ func TestParseJWKSBody_EmptyKeys(t *testing.T) {
 func TestParseJWKSBody_InvalidJSON(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
 
-	auth := New(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
 
 	err := auth.parseJWKSBody([]byte(`not json`))
 	assert.Error(t, err)
@@ -298,7 +298,7 @@ func TestParseJWKSBody_InvalidJSON(t *testing.T) {
 func TestParseJWKSBody_NonRSAKey(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
 
-	auth := New(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
 
 	// EC key should be skipped
 	err := auth.parseJWKSBody([]byte(`{"keys":[{"kty":"EC","kid":"ec-key","crv":"P-256","x":"abc","y":"def"}]}`))
@@ -313,7 +313,7 @@ func TestParseJWKSBody_NonRSAKey(t *testing.T) {
 func TestRefreshJWKSIfNeeded_NotExpired(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
 
-	auth := New(db, cipher, Config{
+	auth := NewJWTAuthenticator(db, cipher, Config{
 		ServiceID:  "test",
 		PublicKeys: `{"type":"jwks","value":{"keys":[]}}`,
 	})
@@ -331,7 +331,7 @@ func TestRefreshJWKSIfNeeded_NotExpired(t *testing.T) {
 func TestStatus(t *testing.T) {
 	db, _, cipher := setupTestDB(t)
 
-	auth := New(db, cipher, Config{
+	auth := NewJWTAuthenticator(db, cipher, Config{
 		ServiceID:  "test",
 		PublicKeys: `{"type":"jwks","value":{"keys":[]}}`,
 	})

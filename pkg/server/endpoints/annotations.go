@@ -6,34 +6,34 @@ import (
 	"net/url"
 
 	"github.com/gorilla/mux"
-	"gorm.io/gorm"
 
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/identity"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/middleware"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/store"
 )
 
 // RegisterAnnotationsEndpoints registers the annotations API endpoints
 func RegisterAnnotationsEndpoints(s *server.Server) {
-	db := s.DB
+	annotationsStore := s.AnnotationsStore
+	authzStore := s.AuthzStore
 
-	// Annotations are accessed via /resources/{account}/{kind}/{id}/annotations
 	annotationsRouter := s.Router.PathPrefix("/resources").Subrouter()
 	annotationsRouter.Use(s.JWTMiddleware.Middleware)
 
 	// GET /resources/{account}/{kind}/{id}/annotations - List all annotations
-	annotationsRouter.HandleFunc("/{account}/{kind}/{identifier:.+}/annotations", handleListAnnotations(db)).Methods("GET")
+	annotationsRouter.HandleFunc("/{account}/{kind}/{identifier:.+}/annotations", handleListAnnotations(annotationsStore, authzStore)).Methods("GET")
 
 	// GET /resources/{account}/{kind}/{id}/annotations/{name} - Get single annotation
-	annotationsRouter.HandleFunc("/{account}/{kind}/{identifier:.+}/annotations/{name}", handleGetAnnotation(db)).Methods("GET")
+	annotationsRouter.HandleFunc("/{account}/{kind}/{identifier:.+}/annotations/{name}", handleGetAnnotation(annotationsStore, authzStore)).Methods("GET")
 
 	// PUT /resources/{account}/{kind}/{id}/annotations/{name} - Set annotation
-	annotationsRouter.HandleFunc("/{account}/{kind}/{identifier:.+}/annotations/{name}", handleSetAnnotation(db)).Methods("PUT")
+	annotationsRouter.HandleFunc("/{account}/{kind}/{identifier:.+}/annotations/{name}", handleSetAnnotation(annotationsStore, authzStore)).Methods("PUT")
 
 	// DELETE /resources/{account}/{kind}/{id}/annotations/{name} - Delete annotation
-	annotationsRouter.HandleFunc("/{account}/{kind}/{identifier:.+}/annotations/{name}", handleDeleteAnnotation(db)).Methods("DELETE")
+	annotationsRouter.HandleFunc("/{account}/{kind}/{identifier:.+}/annotations/{name}", handleDeleteAnnotation(annotationsStore, authzStore)).Methods("DELETE")
 }
 
-func handleListAnnotations(db *gorm.DB) http.HandlerFunc {
+func handleListAnnotations(annotationsStore store.AnnotationsStore, authzStore store.AuthzStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		account := vars["account"]
@@ -42,25 +42,22 @@ func handleListAnnotations(db *gorm.DB) http.HandlerFunc {
 
 		resourceId := account + ":" + kind + ":" + identifier
 
-		// Get role from auth context
-		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
-		roleId := tokenInfo.RoleID
+		id, _ := identity.Get(r.Context())
+		roleId := id.RoleID
 
-		// Check if user can see this resource
-		if !canSeeResource(db, resourceId, roleId) {
+		if !authzStore.IsResourceVisible(resourceId, roleId) {
 			respondWithError(w, http.StatusForbidden, map[string]string{"error": "Forbidden"})
 			return
 		}
 
-		// Fetch annotations
-		annotations := getAnnotationsMap(db, resourceId)
+		annotations := annotationsStore.GetAnnotations(resourceId)
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(annotations)
 	}
 }
 
-func handleGetAnnotation(db *gorm.DB) http.HandlerFunc {
+func handleGetAnnotation(annotationsStore store.AnnotationsStore, authzStore store.AuthzStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		account := vars["account"]
@@ -70,20 +67,16 @@ func handleGetAnnotation(db *gorm.DB) http.HandlerFunc {
 
 		resourceId := account + ":" + kind + ":" + identifier
 
-		// Get role from auth context
-		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
-		roleId := tokenInfo.RoleID
+		id, _ := identity.Get(r.Context())
+		roleId := id.RoleID
 
-		// Check if user can see this resource
-		if !canSeeResource(db, resourceId, roleId) {
+		if !authzStore.IsResourceVisible(resourceId, roleId) {
 			respondWithError(w, http.StatusForbidden, map[string]string{"error": "Forbidden"})
 			return
 		}
 
-		// Fetch annotation
-		var value string
-		result := db.Raw(`SELECT value FROM annotations WHERE resource_id = ? AND name = ?`, resourceId, name).Scan(&value)
-		if result.Error != nil || result.RowsAffected == 0 {
+		value, found := annotationsStore.GetAnnotation(resourceId, name)
+		if !found {
 			respondWithError(w, http.StatusNotFound, map[string]string{"error": "Annotation not found"})
 			return
 		}
@@ -93,7 +86,7 @@ func handleGetAnnotation(db *gorm.DB) http.HandlerFunc {
 	}
 }
 
-func handleSetAnnotation(db *gorm.DB) http.HandlerFunc {
+func handleSetAnnotation(annotationsStore store.AnnotationsStore, authzStore store.AuthzStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		account := vars["account"]
@@ -103,17 +96,14 @@ func handleSetAnnotation(db *gorm.DB) http.HandlerFunc {
 
 		resourceId := account + ":" + kind + ":" + identifier
 
-		// Get role from auth context
-		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
-		roleId := tokenInfo.RoleID
+		id, _ := identity.Get(r.Context())
+		roleId := id.RoleID
 
-		// Check if user has update permission on the resource
-		if !isRoleAllowedTo(db, roleId, "update", resourceId) {
+		if !authzStore.IsRoleAllowedTo(roleId, "update", resourceId) {
 			respondWithError(w, http.StatusForbidden, map[string]string{"error": "Forbidden"})
 			return
 		}
 
-		// Read value from body
 		var value string
 		contentType := r.Header.Get("Content-Type")
 		if contentType == "application/json" {
@@ -124,20 +114,12 @@ func handleSetAnnotation(db *gorm.DB) http.HandlerFunc {
 			}
 			value = body["value"]
 		} else {
-			// Plain text
 			buf := make([]byte, 1024)
 			n, _ := r.Body.Read(buf)
 			value = string(buf[:n])
 		}
 
-		// Upsert annotation
-		err := db.Exec(`
-			INSERT INTO annotations (resource_id, name, value)
-			VALUES (?, ?, ?)
-			ON CONFLICT (resource_id, name) DO UPDATE SET value = EXCLUDED.value
-		`, resourceId, name, value).Error
-
-		if err != nil {
+		if err := annotationsStore.SetAnnotation(resourceId, name, value); err != nil {
 			respondWithError(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
@@ -146,7 +128,7 @@ func handleSetAnnotation(db *gorm.DB) http.HandlerFunc {
 	}
 }
 
-func handleDeleteAnnotation(db *gorm.DB) http.HandlerFunc {
+func handleDeleteAnnotation(annotationsStore store.AnnotationsStore, authzStore store.AuthzStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		account := vars["account"]
@@ -156,49 +138,25 @@ func handleDeleteAnnotation(db *gorm.DB) http.HandlerFunc {
 
 		resourceId := account + ":" + kind + ":" + identifier
 
-		// Get role from auth context
-		tokenInfo, _ := middleware.GetTokenInfo(r.Context())
-		roleId := tokenInfo.RoleID
+		id, _ := identity.Get(r.Context())
+		roleId := id.RoleID
 
-		// Check if user has update permission on the resource
-		if !isRoleAllowedTo(db, roleId, "update", resourceId) {
+		if !authzStore.IsRoleAllowedTo(roleId, "update", resourceId) {
 			respondWithError(w, http.StatusForbidden, map[string]string{"error": "Forbidden"})
 			return
 		}
 
-		// Delete annotation
-		result := db.Exec(`DELETE FROM annotations WHERE resource_id = ? AND name = ?`, resourceId, name)
-		if result.Error != nil {
-			respondWithError(w, http.StatusInternalServerError, map[string]string{"error": result.Error.Error()})
+		deleted, err := annotationsStore.DeleteAnnotation(resourceId, name)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 
-		if result.RowsAffected == 0 {
+		if !deleted {
 			respondWithError(w, http.StatusNotFound, map[string]string{"error": "Annotation not found"})
 			return
 		}
 
 		w.WriteHeader(http.StatusNoContent)
 	}
-}
-
-func canSeeResource(db *gorm.DB, resourceId, roleId string) bool {
-	var canSee bool
-	db.Raw(`SELECT is_resource_visible(?, ?)`, resourceId, roleId).Scan(&canSee)
-	return canSee
-}
-
-func getAnnotationsMap(db *gorm.DB, resourceId string) map[string]string {
-	type annotationRow struct {
-		Name  string
-		Value string
-	}
-	var rows []annotationRow
-	db.Raw(`SELECT name, value FROM annotations WHERE resource_id = ?`, resourceId).Scan(&rows)
-
-	annotations := make(map[string]string)
-	for _, row := range rows {
-		annotations[row.Name] = row.Value
-	}
-	return annotations
 }

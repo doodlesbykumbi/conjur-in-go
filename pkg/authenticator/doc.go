@@ -1,33 +1,30 @@
-// Package authenticator defines the interface and registry for Conjur authenticators.
+// Package authenticator defines the interface for Conjur authenticators.
 //
 // Conjur supports multiple authentication mechanisms. This package provides the
-// common interface that all authenticators must implement, as well as a registry
-// for managing enabled authenticators.
+// common interface that all authenticators must implement.
 //
 // # Authenticator Interface
 //
 // All authenticators implement the Authenticator interface:
 //
 //	type Authenticator interface {
-//	    Authenticate(ctx context.Context, account, login string, credentials []byte) (*Result, error)
+//	    Name() string
+//	    Authenticate(ctx context.Context, input AuthenticatorInput) (string, error)
+//	    Status(ctx context.Context, account, serviceID string) error
 //	}
 //
 // # Built-in Authenticators
 //
-// The following authenticators are available:
+// The following authenticators are available in subpackages:
 //
-//   - authn: API key authentication (default)
-//   - authn-jwt: JWT-based authentication
+//   - authn: API key authentication (default) - see [github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator/authn]
+//   - authn-jwt: JWT-based authentication - see [github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator/authn_jwt]
 //
-// # Registry
+// # On-Demand Creation
 //
-// Authenticators are registered and retrieved via the global registry:
-//
-//	// Register an authenticator
-//	authenticator.Register("authn-jwt/my-service", jwtAuthenticator)
-//
-//	// Get an authenticator
-//	auth, ok := authenticator.Get("authn-jwt/my-service")
+// Authenticators are created on-demand during request handling rather than
+// being pre-registered. This allows for dynamic configuration and reduces
+// startup overhead.
 //
 // # Configuration
 //
@@ -35,4 +32,7 @@
 // variable as a comma-separated list:
 //
 //	CONJUR_AUTHENTICATORS=authn,authn-jwt/my-service
+//
+// The authn (API key) authenticator is enabled by default unless explicitly
+// disabled via CONJUR_AUTHN_API_KEY_DEFAULT=false.
 package authenticator

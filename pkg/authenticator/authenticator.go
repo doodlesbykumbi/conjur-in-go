@@ -2,10 +2,7 @@ package authenticator
 
 import (
 	"context"
-	"fmt"
-	"sync"
-
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/config"
+	"net/http"
 )
 
 // Authenticator defines the interface for all authenticators
@@ -27,93 +24,5 @@ type AuthenticatorInput struct {
 	Login       string
 	Credentials []byte
 	ClientIP    string
-	Request     interface{} // Original HTTP request for authenticators that need it
+	Request     *http.Request // Original HTTP request for authenticators that need it
 }
-
-// Registry holds all registered authenticators
-type Registry struct {
-	mu             sync.RWMutex
-	authenticators map[string]Authenticator
-	enabled        map[string]bool
-}
-
-// NewRegistry creates a new authenticator registry
-func NewRegistry() *Registry {
-	return &Registry{
-		authenticators: make(map[string]Authenticator),
-		enabled:        make(map[string]bool),
-	}
-}
-
-// Register adds an authenticator to the registry
-func (r *Registry) Register(auth Authenticator) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.authenticators[auth.Name()] = auth
-}
-
-// Enable enables an authenticator by name
-func (r *Registry) Enable(name string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, ok := r.authenticators[name]; !ok {
-		return fmt.Errorf("authenticator %q not found", name)
-	}
-	r.enabled[name] = true
-	return nil
-}
-
-// Disable disables an authenticator by name
-func (r *Registry) Disable(name string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.enabled, name)
-}
-
-// Get returns an authenticator by name
-func (r *Registry) Get(name string) (Authenticator, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	auth, ok := r.authenticators[name]
-	return auth, ok
-}
-
-// IsEnabled checks if an authenticator is enabled
-// Checks both the registry's enabled map and the config file settings
-func (r *Registry) IsEnabled(name string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	// Check registry's enabled map first
-	if r.enabled[name] {
-		return true
-	}
-
-	// Also check config file settings
-	return config.Get().IsAuthenticatorEnabled(name)
-}
-
-// Installed returns all installed authenticator names
-func (r *Registry) Installed() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	names := make([]string, 0, len(r.authenticators))
-	for name := range r.authenticators {
-		names = append(names, name)
-	}
-	return names
-}
-
-// Enabled returns all enabled authenticator names
-func (r *Registry) Enabled() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	names := make([]string, 0, len(r.enabled))
-	for name := range r.enabled {
-		names = append(names, name)
-	}
-	return names
-}
-
-// DefaultRegistry is the global authenticator registry
-var DefaultRegistry = NewRegistry()

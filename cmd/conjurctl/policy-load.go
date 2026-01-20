@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/db"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/policy"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/policy/loader"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
@@ -46,7 +46,7 @@ func init() {
 	policyCmd.AddCommand(policyLoadCmd)
 }
 
-func loadPolicyFile(account, filename string) (*policy.LoadResult, error) {
+func loadPolicyFile(account, filename string) (*loader.Result, error) {
 	// Load data key for encryption
 	dataKeyB64 := os.Getenv("CONJUR_DATA_KEY")
 	if dataKeyB64 == "" {
@@ -75,8 +75,9 @@ func loadPolicyFile(account, filename string) (*policy.LoadResult, error) {
 	defer func() { _ = file.Close() }()
 
 	// Load policy
-	loader := policy.NewLoader(database, cipher, account)
-	result, err := loader.LoadFromReader(file)
+	store := loader.NewGormStore(database, cipher)
+	l := loader.NewLoader(store, account)
+	result, err := l.LoadFromReader(file)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load policy: %w", err)
 	}

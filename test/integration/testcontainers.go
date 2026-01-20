@@ -19,8 +19,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator/authn"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/endpoints"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
@@ -148,6 +146,9 @@ func NewTestContext(ctx context.Context) (*TestContext, error) {
 	var inlineServer *server.Server
 	var cancel context.CancelFunc
 
+	// Set CONJUR_AUTHENTICATORS to enable JWT authenticator for tests
+	_ = os.Setenv("CONJUR_AUTHENTICATORS", "authn,authn-jwt/raw")
+
 	if inlineMode {
 		// Start inline server
 		inlineServer, cancel, err = startInlineServer(db, cipher, serverPort)
@@ -195,11 +196,6 @@ func startInlineServer(db *gorm.DB, cipher slosilo.SymmetricCipher, port string)
 
 	// Create keystore
 	keystore := store.NewKeyStore(db)
-
-	// Register authenticators
-	authnAuth := authn.New(db, cipher)
-	authenticator.DefaultRegistry.Register(authnAuth)
-	_ = authenticator.DefaultRegistry.Enable("authn")
 
 	// Create and configure server
 	s := server.NewServer(keystore, cipher, db, "127.0.0.1", port)

@@ -633,11 +633,9 @@ func (s *StepsContext) theResponseShouldContainVersionInfo() error {
 		return fmt.Errorf("failed to parse response: %w", err)
 	}
 
+	// Match Ruby Conjur: only version field is returned
 	if _, ok := result["version"]; !ok {
 		return fmt.Errorf("no 'version' field in response")
-	}
-	if _, ok := result["api_version"]; !ok {
-		return fmt.Errorf("no 'api_version' field in response")
 	}
 	return nil
 }

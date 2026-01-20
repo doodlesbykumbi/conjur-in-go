@@ -1,23 +1,28 @@
-package policy
+package parser
 
 import (
 	"gopkg.in/yaml.v3"
 )
 
-type Resource interface {
-	unused() // to prevent Resource from being used as a type
+// Statement is a marker interface for policy statements.
+type Statement interface {
+	isStatement()
 }
 
-type Resources interface {
+// resources is a type constraint for all resource types that can be marshaled with tags.
+type resources interface {
 	Policy | Variable | User | Group | Layer | Grant | Host | Delete | Permit | Deny | HostFactory | Webservice
 }
 
+// Group represents a group in a policy.
 type Group struct {
-	Resource    `yaml:"-"`
+	Statement   `yaml:"-"`
 	Id          string                 `yaml:"id,omitempty"`
 	Annotations map[string]interface{} `yaml:"annotations,omitempty"`
 	Owner       ResourceRef            `yaml:"owner,omitempty"`
 }
+
+func (Group) isStatement() {}
 
 // UnmarshalYAML for Group handles both scalar (just ID) and mapping forms
 func (g *Group) UnmarshalYAML(value *yaml.Node) error {
@@ -29,15 +34,16 @@ func (g *Group) UnmarshalYAML(value *yaml.Node) error {
 	return value.Decode((*groupAlias)(g))
 }
 
-type Annotations map[string]interface{}
-
+// Variable represents a variable in a policy.
 type Variable struct {
-	Resource    `yaml:"-"`
+	Statement   `yaml:"-"`
 	Id          string                 `yaml:"id"`
 	Owner       ResourceRef            `yaml:"owner,omitempty"`
 	Annotations map[string]interface{} `yaml:"annotations,omitempty"`
 	Kind        string                 `yaml:"kind,omitempty"`
 }
+
+func (Variable) isStatement() {}
 
 // UnmarshalYAML for Variable handles both scalar (just ID) and mapping forms
 func (v *Variable) UnmarshalYAML(value *yaml.Node) error {
@@ -49,13 +55,16 @@ func (v *Variable) UnmarshalYAML(value *yaml.Node) error {
 	return value.Decode((*variableAlias)(v))
 }
 
+// User represents a user in a policy.
 type User struct {
-	Resource     `yaml:"-"`
+	Statement    `yaml:"-"`
 	Id           string                 `yaml:"id"`
 	Owner        ResourceRef            `yaml:"owner,omitempty"`
 	Annotations  map[string]interface{} `yaml:"annotations,omitempty"`
 	RestrictedTo []string               `yaml:"restricted_to,omitempty"`
 }
+
+func (User) isStatement() {}
 
 // UnmarshalYAML for User handles both scalar (just ID) and mapping forms
 func (u *User) UnmarshalYAML(value *yaml.Node) error {
@@ -67,36 +76,48 @@ func (u *User) UnmarshalYAML(value *yaml.Node) error {
 	return value.Decode((*userAlias)(u))
 }
 
+// Policy represents a policy container with nested statements.
 type Policy struct {
-	Resource    `yaml:"-"`
+	Statement   `yaml:"-"`
 	Id          string                 `yaml:"id"`
 	Annotations map[string]interface{} `yaml:"annotations,omitempty"`
 	Owner       ResourceRef            `yaml:"owner,omitempty"`
-	Body        PolicyStatements       `yaml:"body,omitempty"`
+	Body        Statements             `yaml:"body,omitempty"`
 }
 
+func (Policy) isStatement() {}
+
+// Layer represents a layer in a policy.
 type Layer struct {
-	Resource    `yaml:"-"`
+	Statement   `yaml:"-"`
 	Id          string                 `yaml:"id,omitempty"`
 	Annotations map[string]interface{} `yaml:"annotations,omitempty"`
 	Owner       ResourceRef            `yaml:"owner,omitempty"`
 }
 
+func (Layer) isStatement() {}
+
+// Grant represents a role membership grant.
 type Grant struct {
-	Resource `yaml:"-"`
-	Role     ResourceRef   `yaml:"role"`
-	Member   ResourceRef   `yaml:"-"` // Use custom unmarshaler
-	Members  []ResourceRef `yaml:"-"` // Plural form
+	Statement `yaml:"-"`
+	Role      ResourceRef   `yaml:"role"`
+	Member    ResourceRef   `yaml:"-"` // Use custom unmarshaler
+	Members   []ResourceRef `yaml:"-"` // Plural form
 }
 
+func (Grant) isStatement() {}
+
+// Host represents a host in a policy.
 type Host struct {
-	Resource     `yaml:"-"`
+	Statement    `yaml:"-"`
 	Id           string                 `yaml:"id,omitempty"`
 	Owner        ResourceRef            `yaml:"owner,omitempty"`
-	Body         PolicyStatements       `yaml:"body,omitempty"`
+	Body         Statements             `yaml:"body,omitempty"`
 	Annotations  map[string]interface{} `yaml:"annotations,omitempty"`
 	RestrictedTo []string               `yaml:"restricted_to,omitempty"`
 }
+
+func (Host) isStatement() {}
 
 // UnmarshalYAML for Host handles both scalar (just ID) and mapping forms
 func (h *Host) UnmarshalYAML(value *yaml.Node) error {
@@ -108,39 +129,54 @@ func (h *Host) UnmarshalYAML(value *yaml.Node) error {
 	return value.Decode((*hostAlias)(h))
 }
 
+// Delete represents a delete statement.
 type Delete struct {
-	Resource `yaml:"-"`
-	Record   ResourceRef `yaml:"record"`
+	Statement `yaml:"-"`
+	Record    ResourceRef `yaml:"record"`
 }
 
+func (Delete) isStatement() {}
+
+// Permit represents a permission grant.
 type Permit struct {
-	Resource   `yaml:"-"`
+	Statement  `yaml:"-"`
 	Role       ResourceRef   `yaml:"role"`
 	Privileges []Privilege   `yaml:"privileges,flow"`
 	Resources  []ResourceRef `yaml:"-"` // Supports both singular and plural form
 }
 
+func (Permit) isStatement() {}
+
+// Deny represents a permission denial.
 type Deny struct {
-	Resource   `yaml:"-"`
+	Statement  `yaml:"-"`
 	Role       ResourceRef   `yaml:"role"`
 	Privileges []Privilege   `yaml:"privileges,flow"`
 	Resources  []ResourceRef `yaml:"-"` // Supports both singular and plural form
 }
 
+func (Deny) isStatement() {}
+
+// HostFactory represents a host factory.
 type HostFactory struct {
-	Resource    `yaml:"-"`
+	Statement   `yaml:"-"`
 	Id          string                 `yaml:"id"`
 	Annotations map[string]interface{} `yaml:"annotations,omitempty"`
 	Owner       ResourceRef            `yaml:"owner,omitempty"`
 	Layers      []ResourceRef          `yaml:"layers,omitempty"`
 }
 
+func (HostFactory) isStatement() {}
+
+// Webservice represents a webservice.
 type Webservice struct {
-	Resource    `yaml:"-"`
+	Statement   `yaml:"-"`
 	Id          string                 `yaml:"id"`
 	Annotations map[string]interface{} `yaml:"annotations,omitempty"`
 	Owner       ResourceRef            `yaml:"owner,omitempty"`
 }
+
+func (Webservice) isStatement() {}
 
 // UnmarshalYAML for Webservice handles both scalar (just ID) and mapping forms
 func (w *Webservice) UnmarshalYAML(value *yaml.Node) error {
@@ -226,12 +262,13 @@ func (d *Deny) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-type PolicyStatements []Resource
+// Statements is a slice of Statement that can be unmarshaled from YAML.
+type Statements []Statement
 
-func (s *PolicyStatements) UnmarshalYAML(value *yaml.Node) error {
-	var statements []Resource
+func (s *Statements) UnmarshalYAML(value *yaml.Node) error {
+	var statements []Statement
 	for _, node := range value.Content {
-		var statement Resource
+		var statement Statement
 
 		switch node.Tag {
 		case KindPolicy.Tag():
@@ -323,23 +360,23 @@ func (s *PolicyStatements) UnmarshalYAML(value *yaml.Node) error {
 }
 
 func (p Policy) MarshalYAML() (interface{}, error) {
-	return MarshalYAMLWithTag(p, KindPolicy)
+	return marshalYAMLWithTag(p, KindPolicy)
 }
 
 func (v Variable) MarshalYAML() (interface{}, error) {
-	return MarshalYAMLWithTag(v, KindVariable)
+	return marshalYAMLWithTag(v, KindVariable)
 }
 
 func (u User) MarshalYAML() (interface{}, error) {
-	return MarshalYAMLWithTag(u, KindUser)
+	return marshalYAMLWithTag(u, KindUser)
 }
 
 func (g Group) MarshalYAML() (interface{}, error) {
-	return MarshalYAMLWithTag(g, KindGroup)
+	return marshalYAMLWithTag(g, KindGroup)
 }
 
 func (l Layer) MarshalYAML() (interface{}, error) {
-	return MarshalYAMLWithTag(l, KindLayer)
+	return marshalYAMLWithTag(l, KindLayer)
 }
 
 func (g Grant) MarshalYAML() (interface{}, error) {
@@ -367,11 +404,11 @@ func (g Grant) MarshalYAML() (interface{}, error) {
 }
 
 func (h Host) MarshalYAML() (interface{}, error) {
-	return MarshalYAMLWithTag(h, KindHost)
+	return marshalYAMLWithTag(h, KindHost)
 }
 
 func (d Delete) MarshalYAML() (interface{}, error) {
-	return MarshalYAMLWithTag(d, KindDelete)
+	return marshalYAMLWithTag(d, KindDelete)
 }
 
 func (p Permit) MarshalYAML() (interface{}, error) {
@@ -423,9 +460,9 @@ func (d Deny) MarshalYAML() (interface{}, error) {
 }
 
 func (hf HostFactory) MarshalYAML() (interface{}, error) {
-	return MarshalYAMLWithTag(hf, KindHostFactory)
+	return marshalYAMLWithTag(hf, KindHostFactory)
 }
 
 func (w Webservice) MarshalYAML() (interface{}, error) {
-	return MarshalYAMLWithTag(w, KindWebservice)
+	return marshalYAMLWithTag(w, KindWebservice)
 }

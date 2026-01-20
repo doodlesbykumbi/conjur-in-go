@@ -19,8 +19,8 @@ type Authenticator struct {
 	cipher slosilo.SymmetricCipher
 }
 
-// New creates a new API key authenticator
-func New(db *gorm.DB, cipher slosilo.SymmetricCipher) *Authenticator {
+// NewAPIKeyAuthenticator creates a new API key authenticator
+func NewAPIKeyAuthenticator(db *gorm.DB, cipher slosilo.SymmetricCipher) *Authenticator {
 	return &Authenticator{
 		db:     db,
 		cipher: cipher,

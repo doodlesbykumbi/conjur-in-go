@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/db"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/policy"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/policy/loader"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
@@ -134,7 +134,8 @@ func loadPolicyFromPath(database *gorm.DB, cipher slosilo.SymmetricCipher, accou
 	}
 	defer func() { _ = file.Close() }()
 
-	loader := policy.NewLoader(database, cipher, account)
-	_, err = loader.LoadFromReader(file)
+	store := loader.NewGormStore(database, cipher)
+	l := loader.NewLoader(store, account)
+	_, err = l.LoadFromReader(file)
 	return err
 }

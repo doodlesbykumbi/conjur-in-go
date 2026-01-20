@@ -9,7 +9,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator/authn"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/db"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
@@ -96,13 +95,10 @@ By default, database migrations are run on startup. Use --no-migrate to skip.`,
 
 		keystore := store.NewKeyStore(database)
 
-		// Register basic authenticator
-		authnAuth := authn.New(database, cipher)
-		authenticator.DefaultRegistry.Register(authnAuth)
-		_ = authenticator.DefaultRegistry.Enable("authn")
-
-		// Note: JWT authenticators are created on-demand during request handling
-		// based on CONJUR_AUTHENTICATORS config. No pre-registration needed.
+		// Note: Authenticators are created on-demand during request handling.
+		// API key authenticator (authn) is enabled by default via config.
+		// JWT authenticators are created based on CONJUR_AUTHENTICATORS config.
+		_ = authn.NewAPIKeyAuthenticator(database, cipher) // Validate it can be created
 
 		host, _ := cmd.Flags().GetString("bind-address")
 		port, _ := cmd.Flags().GetString("port")

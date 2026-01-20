@@ -7,18 +7,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/config"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 )
-
-// InfoResponse represents the response from / when JSON is requested
-type InfoResponse struct {
-	Version    string `json:"version"`
-	APIVersion string `json:"api_version"`
-}
 
 // AuthenticatorsResponse represents the response from /authenticators
 type AuthenticatorsResponse struct {
@@ -58,50 +52,108 @@ func handleStatus() http.HandlerFunc {
 		if apiVersion == "" {
 			apiVersion = "5.0.0"
 		}
+		fipsMode := os.Getenv("FIPS_MODE_STATUS")
+		if fipsMode == "" {
+			fipsMode = "N/A"
+		}
 
 		// Check if JSON is requested via Accept header or format query param
 		accept := r.Header.Get("Accept")
 		format := r.URL.Query().Get("format")
 		if format == "json" || strings.Contains(accept, "application/json") {
-			response := InfoResponse{
-				Version:    version,
-				APIVersion: apiVersion,
-			}
+			// Match Ruby: {"version":"..."}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(response)
+			_ = json.NewEncoder(w).Encode(map[string]string{"version": version})
 			return
 		}
 
-		// Return HTML status page like Ruby Conjur
+		// Return HTML status page matching Ruby Conjur template
 		html := `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width">
+
+    <link rel="stylesheet" href="/css/status-page.css">
     <title>Conjur Status</title>
-    <style>
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
-      .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-      h1 { color: #333; margin-top: 0; }
-      .status { color: #28a745; font-size: 1.2em; }
-      .info { margin-top: 20px; }
-      .info dt { font-weight: bold; margin-top: 10px; }
-      .info dd { margin-left: 0; color: #666; }
-    </style>
   </head>
   <body>
-    <div class="container">
-      <h1>Conjur Status</h1>
-      <p class="status">Your Conjur server is running!</p>
-      <dl class="info">
-        <dt>Version</dt>
-        <dd>` + version + `</dd>
-        <dt>API Version</dt>
-        <dd>` + apiVersion + `</dd>
-      </dl>
-    </div>
+
+    <header>
+      <div class="logo-cont">
+        <img src="/img/conjur-logo-all-white.svg"/>
+      </div>
+      <div class="links-cont">
+        <a href="https://discuss.cyberarkcommons.org" target="_blank">Discourse</a>
+        |
+        <a href="https://github.com/cyberark/conjur" target="_blank">Github</a>
+      </div>
+    </header>
+
+    <main>
+      <div class="left-panel">
+        <h1>Status</h1>
+        <p class="status-text">Your Conjur server is running!</p>
+
+        <h2>Security Check:</h2>
+        <p>Does your browser show a green lock icon on the left side of the address bar?</p>
+
+        <dl>
+          <dt>Green lock:</dt>
+          <dd>Good, Conjur is secured and authenticated.</dd>
+          <dt>Yellow lock or green with warning sign:</dt>
+          <dd>
+          OK, Conjur is secured but not authenticated. Send your Conjur admin to the
+          <a href="https://www.conjur.org/tutorials/nginx.html" title="Tutorial - NGINX Proxy">
+            Conjur+TLS guide
+          </a>
+          to learn how to use your own certificate &amp; upgrade to green lock.
+          </dd>
+          <dt>Red broken lock or no lock:</dt>
+          <dd>
+          Conjur is running in insecure development mode. Don't put any
+          production secrets in there! Visit the
+          <a href="https://www.conjur.org/tutorials/nginx.html" title="Tutorial - NGINX Proxy">
+            Conjur+TLS guide
+          </a>
+          to learn how to deploy Conjur securely &amp;
+          <a href="https://discuss.cyberarkcommons.org">contact CyberArk</a>
+          with any questions.
+          </dd>
+        </dl>
+      </div>
+
+      <div class="right-panel">
+        <dl>
+          <dt>Details:</dt>
+          <dd>Version ` + version + `</dd>
+          <dd>API Version <a href="https://github.com/cyberark/conjur-openapi-spec/releases/tag/v` + apiVersion + `">` + apiVersion + `</a>
+          <dd>FIPS mode ` + fipsMode + `</a>
+          <dt>More Info:</dt>
+          <dd>
+            <ul>
+              <li><a href="https://docs.conjur.org/Latest/en/Content/Resources/_TopNav/cc_Home.htm" target="_blank">Documentation</a></li>
+              <li><a href="https://www.cyberark.com/products/privileged-account-security-solution/application-access-manager/" target="_blank">CyberArk Application Access Manager</a></li>
+              <li><a href="https://www.conjur.org/" target="_blank">Conjur.org</a></li>
+            </ul>
+          </dd>
+        </dl>
+
+      </div>
+    </main>
+
+    <footer>
+      <div class="logo-cont">
+        <img src="/img/cyberark-white.png"/>
+      </div>
+      <p class="copyright">
+        Conjur Open Source copyright 2020 CyberArk. All rights reserved.
+      </p>
+    </footer>
+
   </body>
-</html>`
+</html>
+`
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(html))
@@ -110,16 +162,33 @@ func handleStatus() http.HandlerFunc {
 
 func handleAuthenticators() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		registry := authenticator.DefaultRegistry
+		cfg := config.Get()
 
-		installed := registry.Installed()
-		enabled := registry.Enabled()
+		// Installed = all valid authenticator types
+		installed := make([]string, len(config.ValidAuthenticators))
+		copy(installed, config.ValidAuthenticators)
+
+		// Enabled = from config
+		enabled := cfg.Authenticators
+		if cfg.AuthnAPIKeyDefault {
+			// Add "authn" if not already present
+			hasAuthn := false
+			for _, a := range enabled {
+				if a == "authn" {
+					hasAuthn = true
+					break
+				}
+			}
+			if !hasAuthn {
+				enabled = append([]string{"authn"}, enabled...)
+			}
+		}
 
 		// Sort for consistent output
 		sort.Strings(installed)
 		sort.Strings(enabled)
 
-		// For now, configured = enabled (in future, read from DB)
+		// For now, configured = enabled
 		response := AuthenticatorsResponse{
 			Installed:  installed,
 			Configured: enabled,
@@ -156,13 +225,13 @@ func handleAuthenticatorStatus(db *gorm.DB) http.HandlerFunc {
 		}
 
 		// Check 2: Authenticator is enabled
-		registry := authenticator.DefaultRegistry
+		cfg := config.Get()
 		authnName := authnType
 		if serviceID != "" {
 			authnName = authnType + "/" + serviceID
 		}
 
-		if !registry.IsEnabled(authnName) && !registry.IsEnabled(authnType) {
+		if !cfg.IsAuthenticatorEnabled(authnName) && !cfg.IsAuthenticatorEnabled(authnType) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotImplemented)
 			_ = json.NewEncoder(w).Encode(AuthenticatorStatusErrorResponse{

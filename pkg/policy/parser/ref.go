@@ -1,12 +1,14 @@
-package policy
+package parser
 
 import "gopkg.in/yaml.v3"
 
+// ResourceRef represents a reference to a resource with its kind and ID.
 type ResourceRef struct {
 	Id   string `yaml:"id"`
 	Kind Kind
 }
 
+// UserRef creates a ResourceRef for a user.
 func UserRef(id string) ResourceRef {
 	return ResourceRef{
 		Id:   id,
@@ -14,6 +16,7 @@ func UserRef(id string) ResourceRef {
 	}
 }
 
+// GroupRef creates a ResourceRef for a group.
 func GroupRef(id string) ResourceRef {
 	return ResourceRef{
 		Id:   id,
@@ -21,6 +24,7 @@ func GroupRef(id string) ResourceRef {
 	}
 }
 
+// LayerRef creates a ResourceRef for a layer.
 func LayerRef(id string) ResourceRef {
 	return ResourceRef{
 		Id:   id,
@@ -28,6 +32,7 @@ func LayerRef(id string) ResourceRef {
 	}
 }
 
+// HostRef creates a ResourceRef for a host.
 func HostRef(id string) ResourceRef {
 	return ResourceRef{
 		Id:   id,
@@ -35,6 +40,7 @@ func HostRef(id string) ResourceRef {
 	}
 }
 
+// VariableRef creates a ResourceRef for a variable.
 func VariableRef(id string) ResourceRef {
 	return ResourceRef{
 		Id:   id,

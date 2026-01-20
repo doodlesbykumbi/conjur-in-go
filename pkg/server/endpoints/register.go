@@ -16,4 +16,7 @@ func RegisterAll(srv *server.Server) {
 	RegisterPublicKeysEndpoints(srv)
 	RegisterHostFactoryEndpoints(srv)
 	RegisterAnnotationsEndpoints(srv)
+
+	// Static files
+	RegisterStaticFiles(srv)
 }

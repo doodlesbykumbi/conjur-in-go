@@ -11,22 +11,34 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/middleware"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/store"
+	gormstore "github.com/doodlesbykumbi/conjur-in-go/pkg/server/store/gorm"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo/store"
+	slstore "github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo/store"
 )
 
 type Server struct {
-	Keystore      *store.KeyStore
+	Keystore      *slstore.KeyStore
 	Cipher        slosilo.SymmetricCipher
 	Router        *mux.Router
 	DB            *gorm.DB
 	JWTMiddleware *middleware.JWTAuthenticator
 	srv           *http.Server
 	listener      net.Listener
+
+	// Stores
+	AuthzStore        store.AuthzStore
+	SecretsStore      store.SecretsStore
+	ResourcesStore    store.ResourcesStore
+	RolesStore        store.RolesStore
+	AnnotationsStore  store.AnnotationsStore
+	HostFactoryStore  store.HostFactoryStore
+	AuthenticateStore store.AuthenticateStore
+	AccountsStore     store.AccountsStore
 }
 
 func NewServer(
-	keystore *store.KeyStore,
+	keystore *slstore.KeyStore,
 	cipher slosilo.SymmetricCipher,
 	db *gorm.DB,
 	host string,
@@ -49,6 +61,16 @@ func NewServer(
 		DB:            db,
 		JWTMiddleware: middleware.NewJWTAuthenticator(keystore),
 		srv:           srv,
+
+		// Initialize stores
+		AuthzStore:        gormstore.NewAuthzStore(db),
+		SecretsStore:      gormstore.NewSecretsStore(db),
+		ResourcesStore:    gormstore.NewResourcesStore(db),
+		RolesStore:        gormstore.NewRolesStore(db),
+		AnnotationsStore:  gormstore.NewAnnotationsStore(db),
+		HostFactoryStore:  gormstore.NewHostFactoryStore(db, cipher),
+		AuthenticateStore: gormstore.NewAuthenticateStore(db, cipher),
+		AccountsStore:     gormstore.NewAccountsStore(db, keystore, cipher),
 	}
 }
 
