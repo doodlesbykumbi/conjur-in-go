@@ -4,7 +4,7 @@ Feature: JWT Authentication
   So that I can use external identity providers
 
   Background:
-    Given a Conjur server is running
+    Given a Conjur server is running with authenticators "authn,authn-jwt/raw"
     And an account "myorg" exists with admin user
 
   Scenario: Successful JWT authentication with inline public keys

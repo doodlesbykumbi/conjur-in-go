@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
+	"gorm.io/gorm"
 
 	"github.com/cucumber/godog"
 )
@@ -21,6 +23,8 @@ import (
 // StepsContext holds state shared between step definitions
 type StepsContext struct {
 	tc            *TestContext
+	server        *ServerInstance // Per-scenario server instance
+	serverURL     string          // URL of the current server
 	response      *http.Response
 	responseBody  []byte
 	authToken     string
@@ -39,10 +43,33 @@ func NewStepsContext(tc *TestContext) *StepsContext {
 	}
 }
 
+// Cleanup cleans up per-scenario resources
+func (s *StepsContext) Cleanup() {
+	if s.server != nil {
+		s.server.Stop()
+		s.server = nil
+	}
+}
+
+// db returns the database connection for this scenario (from the server)
+func (s *StepsContext) db() *gorm.DB {
+	if s.server != nil && s.server.Server != nil {
+		return s.server.Server.DB
+	}
+	return s.tc.DB
+}
+
 // RegisterSteps registers all step definitions
 func (s *StepsContext) RegisterSteps(sc *godog.ScenarioContext) {
-	// Background steps
+	// Register cleanup hook for after each scenario
+	sc.After(func(ctx context.Context, sc *godog.Scenario, err error) (context.Context, error) {
+		s.Cleanup()
+		return ctx, nil
+	})
+
+	// Background steps - all servers use isolated schemas by default
 	sc.Step(`^a Conjur server is running$`, s.aConjurServerIsRunning)
+	sc.Step(`^a Conjur server is running with authenticators "([^"]*)"$`, s.aConjurServerIsRunningWithAuthenticators)
 	sc.Step(`^an account "([^"]*)" exists with admin user$`, s.anAccountExistsWithAdminUser)
 	sc.Step(`^I am authenticated as "([^"]*)" in account "([^"]*)"$`, s.iAmAuthenticatedAs)
 
@@ -111,16 +138,41 @@ func (s *StepsContext) RegisterSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the response should indicate status "([^"]*)"$`, s.theResponseShouldIndicateStatus)
 }
 
-// Background steps
+// Background steps - all servers use isolated schemas by default
 
 func (s *StepsContext) aConjurServerIsRunning() error {
-	// Server is already running via TestContext
+	return s.aConjurServerIsRunningWithAuthenticators("authn")
+}
+
+// aConjurServerIsRunningWithAuthenticators starts a per-scenario server with specific authenticators
+func (s *StepsContext) aConjurServerIsRunningWithAuthenticators(authenticators string) error {
+	// Parse authenticators
+	authList := strings.Split(authenticators, ",")
+	for i := range authList {
+		authList[i] = strings.TrimSpace(authList[i])
+	}
+
+	// Start a new server instance using the shared database
+	cfg := ServerConfig{
+		Authenticators: authList,
+	}
+
+	server, err := StartServer(s.tc, s.tc.DatabaseURL, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to start server with authenticators %v: %w", authList, err)
+	}
+
+	s.server = server
+	s.serverURL = server.ServerURL
 	return nil
 }
 
 func (s *StepsContext) anAccountExistsWithAdminUser(account string) error {
 	s.account = account
 	s.adminAPIKey = "test-admin-api-key-" + account
+
+	// Use the server's DB connection for setup
+	db := s.db()
 
 	// Create signing key
 	key, err := slosilo.GenerateKey()
@@ -140,7 +192,7 @@ func (s *StepsContext) anAccountExistsWithAdminUser(account string) error {
 	}
 
 	// Insert signing key
-	if err := s.tc.DB.Exec(`
+	if err := db.Exec(`
 		INSERT INTO slosilo_keystore (id, key, fingerprint) VALUES (?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET key = EXCLUDED.key, fingerprint = EXCLUDED.fingerprint
 	`, keyId, encryptedKey, key.Fingerprint()).Error; err != nil {
@@ -149,12 +201,12 @@ func (s *StepsContext) anAccountExistsWithAdminUser(account string) error {
 
 	// Create admin role
 	adminRoleId := account + ":user:admin"
-	if err := s.tc.DB.Exec(`INSERT INTO roles (role_id) VALUES (?) ON CONFLICT DO NOTHING`, adminRoleId).Error; err != nil {
+	if err := db.Exec(`INSERT INTO roles (role_id) VALUES (?) ON CONFLICT DO NOTHING`, adminRoleId).Error; err != nil {
 		return err
 	}
 
 	// Create admin resource
-	if err := s.tc.DB.Exec(`
+	if err := db.Exec(`
 		INSERT INTO resources (resource_id, owner_id) VALUES (?, ?)
 		ON CONFLICT DO NOTHING
 	`, adminRoleId, adminRoleId).Error; err != nil {
@@ -167,7 +219,7 @@ func (s *StepsContext) anAccountExistsWithAdminUser(account string) error {
 		return err
 	}
 
-	if err := s.tc.DB.Exec(`
+	if err := db.Exec(`
 		INSERT INTO credentials (role_id, api_key) VALUES (?, ?)
 		ON CONFLICT (role_id) DO UPDATE SET api_key = EXCLUDED.api_key
 	`, adminRoleId, encryptedAPIKey).Error; err != nil {
@@ -176,11 +228,11 @@ func (s *StepsContext) anAccountExistsWithAdminUser(account string) error {
 
 	// Create root policy
 	policyRoleId := account + ":policy:root"
-	if err := s.tc.DB.Exec(`INSERT INTO roles (role_id) VALUES (?) ON CONFLICT DO NOTHING`, policyRoleId).Error; err != nil {
+	if err := db.Exec(`INSERT INTO roles (role_id) VALUES (?) ON CONFLICT DO NOTHING`, policyRoleId).Error; err != nil {
 		return err
 	}
 
-	return s.tc.DB.Exec(`
+	return db.Exec(`
 		INSERT INTO resources (resource_id, owner_id) VALUES (?, ?)
 		ON CONFLICT DO NOTHING
 	`, policyRoleId, adminRoleId).Error
@@ -208,7 +260,7 @@ func (s *StepsContext) iAuthenticateWithCorrectAPIKey(login, account string) err
 
 func (s *StepsContext) iAuthenticateWithAPIKey(login, account, apiKey string) error {
 	encodedLogin := url.PathEscape(login)
-	reqURL := fmt.Sprintf("%s/authn/%s/%s/authenticate", s.tc.ServerURL, account, encodedLogin)
+	reqURL := fmt.Sprintf("%s/authn/%s/%s/authenticate", s.serverURL, account, encodedLogin)
 	req, err := http.NewRequest("POST", reqURL, strings.NewReader(apiKey))
 	if err != nil {
 		return err
@@ -242,14 +294,16 @@ func (s *StepsContext) aHostExistsInAccount(hostName, account string) error {
 	hostAPIKey := "host-api-key-" + hostName
 	s.hostAPIKeys[hostName] = hostAPIKey
 
+	db := s.db()
+
 	// Create host role
-	if err := s.tc.DB.Exec(`INSERT INTO roles (role_id) VALUES (?) ON CONFLICT DO NOTHING`, hostRoleId).Error; err != nil {
+	if err := db.Exec(`INSERT INTO roles (role_id) VALUES (?) ON CONFLICT DO NOTHING`, hostRoleId).Error; err != nil {
 		return err
 	}
 
 	// Create host resource
 	adminRoleId := account + ":user:admin"
-	if err := s.tc.DB.Exec(`
+	if err := db.Exec(`
 		INSERT INTO resources (resource_id, owner_id) VALUES (?, ?)
 		ON CONFLICT DO NOTHING
 	`, hostRoleId, adminRoleId).Error; err != nil {
@@ -262,7 +316,7 @@ func (s *StepsContext) aHostExistsInAccount(hostName, account string) error {
 		return err
 	}
 
-	return s.tc.DB.Exec(`
+	return db.Exec(`
 		INSERT INTO credentials (role_id, api_key) VALUES (?, ?)
 		ON CONFLICT (role_id) DO UPDATE SET api_key = EXCLUDED.api_key
 	`, hostRoleId, encryptedAPIKey).Error
@@ -307,7 +361,7 @@ func (s *StepsContext) theResponseBodyShouldBe(expected string) error {
 // Variable/Secret steps
 
 func (s *StepsContext) iStoreValueInVariable(value, variableId string) error {
-	url := fmt.Sprintf("%s/secrets/%s/variable/%s", s.tc.ServerURL, s.account, variableId)
+	url := fmt.Sprintf("%s/secrets/%s/variable/%s", s.serverURL, s.account, variableId)
 	req, err := http.NewRequest("POST", url, strings.NewReader(value))
 	if err != nil {
 		return err
@@ -325,7 +379,7 @@ func (s *StepsContext) iStoreValueInVariable(value, variableId string) error {
 }
 
 func (s *StepsContext) iRetrieveVariable(variableId string) error {
-	url := fmt.Sprintf("%s/secrets/%s/variable/%s", s.tc.ServerURL, s.account, variableId)
+	url := fmt.Sprintf("%s/secrets/%s/variable/%s", s.serverURL, s.account, variableId)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -344,7 +398,7 @@ func (s *StepsContext) iRetrieveVariable(variableId string) error {
 
 func (s *StepsContext) theVariableHasValue(variableId, value string) error {
 	// Use the secrets API to store the value
-	url := fmt.Sprintf("%s/secrets/%s/variable/%s", s.tc.ServerURL, s.account, variableId)
+	url := fmt.Sprintf("%s/secrets/%s/variable/%s", s.serverURL, s.account, variableId)
 	req, err := http.NewRequest("POST", url, strings.NewReader(value))
 	if err != nil {
 		return err
@@ -365,7 +419,7 @@ func (s *StepsContext) theVariableHasValue(variableId, value string) error {
 }
 
 func (s *StepsContext) iBatchRetrieveVariables(variableIds string) error {
-	url := fmt.Sprintf("%s/secrets?variable_ids=%s", s.tc.ServerURL, variableIds)
+	url := fmt.Sprintf("%s/secrets?variable_ids=%s", s.serverURL, variableIds)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -401,7 +455,7 @@ func (s *StepsContext) theResponseShouldContainSecret(resourceId, expectedValue 
 // Policy steps
 
 func (s *StepsContext) iLoadPolicyTo(policyId string, policyYAML *godog.DocString) error {
-	url := fmt.Sprintf("%s/policies/%s/policy/%s", s.tc.ServerURL, s.account, policyId)
+	url := fmt.Sprintf("%s/policies/%s/policy/%s", s.serverURL, s.account, policyId)
 	req, err := http.NewRequest("POST", url, bytes.NewReader([]byte(policyYAML.Content)))
 	if err != nil {
 		return err
@@ -444,7 +498,7 @@ func (s *StepsContext) iLoadPolicyTo(policyId string, policyYAML *godog.DocStrin
 }
 
 func (s *StepsContext) iValidatePolicyFor(policyId string, policyYAML *godog.DocString) error {
-	url := fmt.Sprintf("%s/policies/%s/policy/%s?dry_run=true", s.tc.ServerURL, s.account, policyId)
+	url := fmt.Sprintf("%s/policies/%s/policy/%s?dry_run=true", s.serverURL, s.account, policyId)
 	req, err := http.NewRequest("POST", url, bytes.NewReader([]byte(policyYAML.Content)))
 	if err != nil {
 		return err
@@ -482,7 +536,7 @@ func (s *StepsContext) thePolicyVersionShouldBeGreaterThan(minVersion int) error
 func (s *StepsContext) userShouldExistInAccount(userId, account string) error {
 	roleId := account + ":user:" + userId
 	var count int64
-	if err := s.tc.DB.Raw(`SELECT COUNT(*) FROM roles WHERE role_id = ?`, roleId).Scan(&count).Error; err != nil {
+	if err := s.db().Raw(`SELECT COUNT(*) FROM roles WHERE role_id = ?`, roleId).Scan(&count).Error; err != nil {
 		return err
 	}
 	if count == 0 {
@@ -494,7 +548,7 @@ func (s *StepsContext) userShouldExistInAccount(userId, account string) error {
 func (s *StepsContext) userShouldNotExistInAccount(userId, account string) error {
 	roleId := account + ":user:" + userId
 	var count int64
-	if err := s.tc.DB.Raw(`SELECT COUNT(*) FROM roles WHERE role_id = ?`, roleId).Scan(&count).Error; err != nil {
+	if err := s.db().Raw(`SELECT COUNT(*) FROM roles WHERE role_id = ?`, roleId).Scan(&count).Error; err != nil {
 		return err
 	}
 	if count > 0 {
@@ -506,7 +560,7 @@ func (s *StepsContext) userShouldNotExistInAccount(userId, account string) error
 func (s *StepsContext) groupShouldExistInAccount(groupId, account string) error {
 	roleId := account + ":group:" + groupId
 	var count int64
-	if err := s.tc.DB.Raw(`SELECT COUNT(*) FROM roles WHERE role_id = ?`, roleId).Scan(&count).Error; err != nil {
+	if err := s.db().Raw(`SELECT COUNT(*) FROM roles WHERE role_id = ?`, roleId).Scan(&count).Error; err != nil {
 		return err
 	}
 	if count == 0 {
@@ -518,7 +572,7 @@ func (s *StepsContext) groupShouldExistInAccount(groupId, account string) error 
 func (s *StepsContext) variableShouldExistInAccount(variableId, account string) error {
 	resourceId := account + ":variable:" + variableId
 	var count int64
-	if err := s.tc.DB.Raw(`SELECT COUNT(*) FROM resources WHERE resource_id = ?`, resourceId).Scan(&count).Error; err != nil {
+	if err := s.db().Raw(`SELECT COUNT(*) FROM resources WHERE resource_id = ?`, resourceId).Scan(&count).Error; err != nil {
 		return err
 	}
 	if count == 0 {
@@ -543,7 +597,7 @@ func (s *StepsContext) theResponseShouldIndicateDryRunMode() error {
 // Status/Info steps
 
 func (s *StepsContext) iRequestTheStatusPage() error {
-	url := fmt.Sprintf("%s/", s.tc.ServerURL)
+	url := fmt.Sprintf("%s/", s.serverURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -560,7 +614,7 @@ func (s *StepsContext) iRequestTheStatusPage() error {
 }
 
 func (s *StepsContext) iRequestTheAuthenticatorsList() error {
-	url := fmt.Sprintf("%s/authenticators", s.tc.ServerURL)
+	url := fmt.Sprintf("%s/authenticators", s.serverURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -611,7 +665,7 @@ func (s *StepsContext) theResponseShouldContainAuthenticator(authenticator strin
 }
 
 func (s *StepsContext) iRequestTheStatusPageWithJSONFormat() error {
-	url := fmt.Sprintf("%s/?format=json", s.tc.ServerURL)
+	url := fmt.Sprintf("%s/?format=json", s.serverURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -645,11 +699,11 @@ func (s *StepsContext) theResponseShouldContainVersionInfo() error {
 func (s *StepsContext) theVariableHasExpired(variableId string) error {
 	resourceId := s.account + ":variable:" + variableId
 	pastTime := time.Now().Add(-1 * time.Hour)
-	return s.tc.DB.Exec(`UPDATE secrets SET expires_at = ? WHERE resource_id = ?`, pastTime, resourceId).Error
+	return s.db().Exec(`UPDATE secrets SET expires_at = ? WHERE resource_id = ?`, pastTime, resourceId).Error
 }
 
 func (s *StepsContext) iExpireTheVariable(variableId string) error {
-	url := fmt.Sprintf("%s/secrets/%s/variable/%s?expirations", s.tc.ServerURL, s.account, variableId)
+	url := fmt.Sprintf("%s/secrets/%s/variable/%s?expirations", s.serverURL, s.account, variableId)
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
 		return err
@@ -669,7 +723,7 @@ func (s *StepsContext) iExpireTheVariable(variableId string) error {
 // Account management steps
 
 func (s *StepsContext) iRequestTheAccountsList() error {
-	url := fmt.Sprintf("%s/accounts", s.tc.ServerURL)
+	url := fmt.Sprintf("%s/accounts", s.serverURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -686,7 +740,7 @@ func (s *StepsContext) iRequestTheAccountsList() error {
 }
 
 func (s *StepsContext) iCreateAnAccount(accountName string) error {
-	url := fmt.Sprintf("%s/accounts?id=%s", s.tc.ServerURL, accountName)
+	url := fmt.Sprintf("%s/accounts?id=%s", s.serverURL, accountName)
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
 		return err
@@ -703,7 +757,7 @@ func (s *StepsContext) iCreateAnAccount(accountName string) error {
 }
 
 func (s *StepsContext) iDeleteTheAccount(accountName string) error {
-	url := fmt.Sprintf("%s/accounts/%s", s.tc.ServerURL, accountName)
+	url := fmt.Sprintf("%s/accounts/%s", s.serverURL, accountName)
 	req, err := http.NewRequest("DELETE", url, nil)
 	if err != nil {
 		return err
@@ -765,7 +819,7 @@ func (s *StepsContext) theResponseShouldContainAnAPIKey() error {
 
 func (s *StepsContext) iRetrieveTheKeyForRole(roleID string) error {
 	// This test only works in binary mode since we need to run conjurctl
-	if s.tc.ServerProcess == nil {
+	if s.tc.InlineMode {
 		// Skip in inline mode - just verify the API key was stored
 		s.retrievedKey = s.createdAPIKey
 		return nil
@@ -804,9 +858,9 @@ func (s *StepsContext) iCheckTheStatusOfForAccount(authenticator, account string
 	var url string
 	if strings.Contains(authenticator, "/") {
 		parts := strings.SplitN(authenticator, "/", 2)
-		url = fmt.Sprintf("%s/%s/%s/%s/status", s.tc.ServerURL, parts[0], parts[1], account)
+		url = fmt.Sprintf("%s/%s/%s/%s/status", s.serverURL, parts[0], parts[1], account)
 	} else {
-		url = fmt.Sprintf("%s/%s/%s/status", s.tc.ServerURL, authenticator, account)
+		url = fmt.Sprintf("%s/%s/%s/status", s.serverURL, authenticator, account)
 	}
 
 	req, err := http.NewRequest("GET", url, nil)

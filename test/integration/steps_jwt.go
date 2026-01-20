@@ -55,7 +55,7 @@ func (s *StepsContext) iSetAuthnJWTVariableTo(serviceID, variableName, value str
 
 // setVariableValue sets a variable value via the secrets API
 func (s *StepsContext) setVariableValue(variableID, value string) error {
-	url := fmt.Sprintf("%s/secrets/%s/variable/%s", s.tc.ServerURL, s.account, variableID)
+	url := fmt.Sprintf("%s/secrets/%s/variable/%s", s.serverURL, s.account, variableID)
 	req, err := http.NewRequest("POST", url, strings.NewReader(value))
 	if err != nil {
 		return err
@@ -94,7 +94,7 @@ func (s *StepsContext) iAuthenticateViaAuthnJWTWithValidTokenForHost(hostID stri
 	token.Header["kid"] = "test-key-1"
 	tokenString, _ := token.SignedString(jwtPrivateKey)
 
-	url := fmt.Sprintf("%s/authn-jwt/%s/%s/authenticate", s.tc.ServerURL, jwtServiceID, s.account)
+	url := fmt.Sprintf("%s/authn-jwt/%s/%s/authenticate", s.serverURL, jwtServiceID, s.account)
 	req, _ := http.NewRequest("POST", url, strings.NewReader("jwt="+tokenString))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
@@ -116,7 +116,7 @@ func (s *StepsContext) iAuthenticateViaAuthnJWTWithInvalidTokenForHost(hostID st
 	token.Header["kid"] = "test-key-1"
 	tokenString, _ := token.SignedString(wrongKey)
 
-	url := fmt.Sprintf("%s/authn-jwt/%s/%s/authenticate", s.tc.ServerURL, jwtServiceID, s.account)
+	url := fmt.Sprintf("%s/authn-jwt/%s/%s/authenticate", s.serverURL, jwtServiceID, s.account)
 	req, _ := http.NewRequest("POST", url, strings.NewReader("jwt="+tokenString))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
@@ -146,7 +146,7 @@ func (s *StepsContext) aJWTAuthenticatorIsConfiguredButNotEnabled(serviceID stri
 }
 
 func (s *StepsContext) iAuthenticateViaAuthnJWTWithService(serviceID string) error {
-	url := fmt.Sprintf("%s/authn-jwt/%s/%s/authenticate", s.tc.ServerURL, serviceID, s.account)
+	url := fmt.Sprintf("%s/authn-jwt/%s/%s/authenticate", s.serverURL, serviceID, s.account)
 	req, _ := http.NewRequest("POST", url, strings.NewReader("jwt=dummy"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 

@@ -3,12 +3,10 @@ package integration
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -19,25 +17,24 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/endpoints"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo/store"
 )
 
-// TestContext holds all the resources needed for integration tests
+// TestContext holds all the resources needed for integration tests.
+// This only sets up the shared PostgreSQL container and database connection.
+// Each test scenario creates its own isolated server instance with its own schema.
 type TestContext struct {
-	DB            *gorm.DB
-	RawDB         *sql.DB
-	Container     testcontainers.Container
-	ServerURL     string
-	DatabaseURL   string // Connection string for the test database
-	DataKey       []byte
-	Cipher        slosilo.SymmetricCipher
-	HTTPClient    *http.Client
-	Cancel        context.CancelFunc
-	ServerProcess *exec.Cmd
-	InlineServer  *server.Server // For inline mode
+	DB          *gorm.DB
+	RawDB       *sql.DB
+	Container   testcontainers.Container
+	DatabaseURL string // Connection string for the test database
+	DataKey     []byte
+	Cipher      slosilo.SymmetricCipher
+	HTTPClient  *http.Client
+
+	// Mode configuration for per-scenario servers
+	InlineMode bool   // True if running in inline mode
+	BinaryPath string // Path to conjurctl binary (for binary mode)
 }
 
 // NewTestContext creates a new test context with PostgreSQL testcontainer.
@@ -139,98 +136,18 @@ func NewTestContext(ctx context.Context) (*TestContext, error) {
 	dbCtx := context.WithValue(context.Background(), "cipher", cipher)
 	db = db.WithContext(dbCtx)
 
-	serverPort := "18080" // Use a fixed port for testing
-	serverURL := fmt.Sprintf("http://127.0.0.1:%s", serverPort)
-
-	var serverProcess *exec.Cmd
-	var inlineServer *server.Server
-	var cancel context.CancelFunc
-
-	// Set CONJUR_AUTHENTICATORS to enable JWT authenticator for tests
-	_ = os.Setenv("CONJUR_AUTHENTICATORS", "authn,authn-jwt/raw")
-
-	if inlineMode {
-		// Start inline server
-		inlineServer, cancel, err = startInlineServer(db, cipher, serverPort)
-		if err != nil {
-			_ = pgContainer.Terminate(ctx)
-			return nil, fmt.Errorf("failed to start inline server: %w", err)
-		}
-	} else {
-		// Start the actual binary
-		serverProcess, cancel, err = startBinary(binaryPath, connStr, dataKey, serverPort)
-		if err != nil {
-			_ = pgContainer.Terminate(ctx)
-			return nil, fmt.Errorf("failed to start server binary: %w", err)
-		}
-	}
-
-	// Wait for server to be ready
-	if err := waitForServer(serverURL, 30*time.Second); err != nil {
-		cancel()
-		if serverProcess != nil && serverProcess.Process != nil {
-			_ = serverProcess.Process.Kill()
-		}
-		_ = pgContainer.Terminate(ctx)
-		return nil, fmt.Errorf("server failed to become ready: %w", err)
-	}
-
+	// No shared server - each scenario creates its own isolated server instance
 	return &TestContext{
-		DB:            db,
-		RawDB:         rawDB,
-		Container:     pgContainer,
-		ServerURL:     serverURL,
-		DatabaseURL:   connStr,
-		DataKey:       dataKey,
-		Cipher:        cipher,
-		HTTPClient:    &http.Client{Timeout: 10 * time.Second},
-		Cancel:        cancel,
-		ServerProcess: serverProcess,
-		InlineServer:  inlineServer,
+		DB:          db,
+		RawDB:       rawDB,
+		Container:   pgContainer,
+		DatabaseURL: connStr,
+		DataKey:     dataKey,
+		Cipher:      cipher,
+		HTTPClient:  &http.Client{Timeout: 10 * time.Second},
+		InlineMode:  inlineMode,
+		BinaryPath:  binaryPath,
 	}, nil
-}
-
-// startInlineServer starts the server in-process (no binary needed)
-func startInlineServer(db *gorm.DB, cipher slosilo.SymmetricCipher, port string) (*server.Server, context.CancelFunc, error) {
-	_, cancel := context.WithCancel(context.Background())
-
-	// Create keystore
-	keystore := store.NewKeyStore(db)
-
-	// Create and configure server
-	s := server.NewServer(keystore, cipher, db, "127.0.0.1", port)
-	endpoints.RegisterAll(s)
-
-	// Start server in background
-	go func() {
-		_ = s.Start()
-	}()
-
-	return s, cancel, nil
-}
-
-// startBinary starts the conjurctl server binary
-func startBinary(binaryPath, dbURL string, dataKey []byte, port string) (*exec.Cmd, context.CancelFunc, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Use --no-migrate since we already ran migrations in the test setup
-	cmd := exec.CommandContext(ctx, binaryPath, "server", "--no-migrate", "-b", "127.0.0.1", "-p", port)
-	cmd.Env = append(os.Environ(),
-		"DATABASE_URL="+dbURL,
-		"CONJUR_DATA_KEY="+base64.StdEncoding.EncodeToString(dataKey),
-		// Enable JWT authenticator for integration tests
-		"CONJUR_AUTHENTICATORS=authn,authn-jwt/raw",
-		"CONJUR_ACCOUNT=cucumber",
-	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		return nil, nil, fmt.Errorf("failed to start binary: %w", err)
-	}
-
-	return cmd, cancel, nil
 }
 
 // waitForServer polls the server until it responds or times out
@@ -254,13 +171,6 @@ func waitForServer(serverURL string, timeout time.Duration) error {
 
 // Close cleans up all test resources
 func (tc *TestContext) Close(ctx context.Context) {
-	if tc.Cancel != nil {
-		tc.Cancel()
-	}
-	if tc.ServerProcess != nil && tc.ServerProcess.Process != nil {
-		_ = tc.ServerProcess.Process.Kill()
-		_ = tc.ServerProcess.Wait()
-	}
 	if tc.RawDB != nil {
 		_ = tc.RawDB.Close()
 	}
