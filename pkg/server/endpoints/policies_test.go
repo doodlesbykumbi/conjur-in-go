@@ -2,224 +2,186 @@ package endpoints
 
 import (
 	"encoding/json"
-	"io"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strings"
 	"testing"
+	"time"
 
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/store"
 )
 
-func TestPoliciesEndpoint(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
+func TestHandleGetPolicy(t *testing.T) {
+	t.Run("returns policy versions list", func(t *testing.T) {
+		resourcesStore := NewMockResourcesStore()
+		policyStore := NewMockPolicyStore()
 
-	dataKey := make([]byte, 32)
-	for i := range dataKey {
-		dataKey[i] = byte(i)
-	}
+		policyID := "myorg:policy:root"
+		roleID := "myorg:user:admin"
 
-	testServer, err := NewTestServer(dbURL, dataKey)
-	if err != nil {
-		t.Fatalf("failed to create test server: %v", err)
-	}
+		resourcesStore.On("IsResourceVisible", policyID, roleID).Return(true)
 
-	cipher, _ := slosilo.NewSymmetric(dataKey)
+		now := time.Now()
+		policyStore.On("ListPolicyVersions", policyID).Return([]store.PolicyVersion{
+			{Version: 1, CreatedAt: now, PolicySHA256: "abc123", RoleID: roleID},
+			{Version: 2, CreatedAt: now.Add(time.Hour), PolicySHA256: "def456", RoleID: roleID},
+		})
 
-	// Setup test account
-	account := "testpolicy"
+		handler := handleGetPolicy(resourcesStore, policyStore)
 
-	// Cleanup before and after
-	_ = CleanupTestData(testServer.DB, account)
-	defer func() { _ = CleanupTestData(testServer.DB, account) }()
+		req := requestWithIdentity("GET", "/policies/myorg/policy/root", "", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"identifier": "root",
+		})
 
-	err = SetupTestAccount(testServer.DB, cipher, account, "admin-api-key")
-	if err != nil {
-		t.Fatalf("failed to setup test account: %v", err)
-	}
-
-	// Register endpoints
-	RegisterPoliciesEndpoints(testServer)
-
-	t.Run("load simple policy", func(t *testing.T) {
-		policy := `- !user
-  id: alice
-  annotations:
-    description: Test user
-`
-		req := httptest.NewRequest("POST", "/policies/"+account+"/policy/root", strings.NewReader(policy))
-		req.Header.Set("Content-Type", "application/x-yaml")
 		w := httptest.NewRecorder()
+		handler(w, req)
 
-		testServer.Router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
 
-		resp := w.Result()
-		if resp.StatusCode != http.StatusCreated {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected status 201, got %d: %s", resp.StatusCode, string(body))
-		}
+		var versions []PolicyVersionResponse
+		err := json.Unmarshal(w.Body.Bytes(), &versions)
+		require.NoError(t, err)
 
-		// Verify response contains created roles
-		var result map[string]interface{}
-		body, _ := io.ReadAll(resp.Body)
-		err := json.Unmarshal(body, &result)
-		if err != nil {
-			t.Fatalf("failed to parse response: %v", err)
-		}
-
-		createdRoles, ok := result["created_roles"].(map[string]interface{})
-		if !ok {
-			t.Fatal("expected created_roles in response")
-		}
-
-		expectedRoleId := account + ":user:alice"
-		if _, exists := createdRoles[expectedRoleId]; !exists {
-			t.Errorf("expected role %q in created_roles", expectedRoleId)
-		}
-
-		// Verify user was created in database
-		var count int64
-		testServer.DB.Raw(`SELECT COUNT(*) FROM roles WHERE role_id = ?`, expectedRoleId).Scan(&count)
-		if count != 1 {
-			t.Errorf("expected 1 role in database, got %d", count)
-		}
+		assert.Len(t, versions, 2)
+		assert.Equal(t, 1, versions[0].Version)
+		assert.Equal(t, 2, versions[1].Version)
 	})
 
-	t.Run("load policy with multiple resources", func(t *testing.T) {
-		policy := `- !group
-  id: developers
+	t.Run("returns specific policy version text", func(t *testing.T) {
+		resourcesStore := NewMockResourcesStore()
+		policyStore := NewMockPolicyStore()
 
-- !variable
-  id: api/key
-  annotations:
-    description: API key
+		policyID := "myorg:policy:root"
+		roleID := "myorg:user:admin"
 
-- !host
-  id: webapp
-`
-		req := httptest.NewRequest("POST", "/policies/"+account+"/policy/root", strings.NewReader(policy))
+		resourcesStore.On("IsResourceVisible", policyID, roleID).Return(true)
+
+		policyText := "- !user\n  id: alice\n"
+		policyStore.On("GetPolicyVersion", policyID, 1).Return(&store.PolicyVersion{
+			Version:      1,
+			CreatedAt:    time.Now(),
+			PolicySHA256: "abc123",
+			PolicyText:   policyText,
+		}, nil)
+
+		handler := handleGetPolicy(resourcesStore, policyStore)
+
+		req := requestWithIdentity("GET", "/policies/myorg/policy/root?version=1", "", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"identifier": "root",
+		})
+
 		w := httptest.NewRecorder()
+		handler(w, req)
 
-		testServer.Router.ServeHTTP(w, req)
-
-		resp := w.Result()
-		if resp.StatusCode != http.StatusCreated {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected status 201, got %d: %s", resp.StatusCode, string(body))
-		}
-
-		// Verify resources were created
-		var count int64
-		testServer.DB.Raw(`SELECT COUNT(*) FROM resources WHERE resource_id LIKE ?`, account+":%").Scan(&count)
-		// Should have: admin, root policy, alice (from previous test), developers, api/key, webapp = 6+
-		if count < 4 {
-			t.Errorf("expected at least 4 resources, got %d", count)
-		}
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "application/x-yaml", w.Header().Get("Content-Type"))
+		assert.Equal(t, policyText, w.Body.String())
 	})
 
-	t.Run("load policy with grant and permit", func(t *testing.T) {
-		policy := `- !user
-  id: bob
+	t.Run("returns 403 when policy not visible", func(t *testing.T) {
+		resourcesStore := NewMockResourcesStore()
+		policyStore := NewMockPolicyStore()
 
-- !grant
-  role: !group developers
-  member: !user bob
+		policyID := "myorg:policy:root"
+		roleID := "myorg:user:bob"
 
-- !permit
-  role: !group developers
-  privileges: [read, execute]
-  resource: !variable api/key
-`
-		req := httptest.NewRequest("POST", "/policies/"+account+"/policy/root", strings.NewReader(policy))
+		resourcesStore.On("IsResourceVisible", policyID, roleID).Return(false)
+
+		handler := handleGetPolicy(resourcesStore, policyStore)
+
+		req := requestWithIdentity("GET", "/policies/myorg/policy/root", "", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"identifier": "root",
+		})
+
 		w := httptest.NewRecorder()
+		handler(w, req)
 
-		testServer.Router.ServeHTTP(w, req)
-
-		resp := w.Result()
-		if resp.StatusCode != http.StatusCreated {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected status 201, got %d: %s", resp.StatusCode, string(body))
-		}
-
-		// Verify grant was created
-		var grantCount int64
-		testServer.DB.Raw(`
-			SELECT COUNT(*) FROM role_memberships 
-			WHERE role_id = ? AND member_id = ?
-		`, account+":group:developers", account+":user:bob").Scan(&grantCount)
-		if grantCount != 1 {
-			t.Errorf("expected 1 grant, got %d", grantCount)
-		}
-
-		// Verify permissions were created
-		var permCount int64
-		testServer.DB.Raw(`
-			SELECT COUNT(*) FROM permissions 
-			WHERE resource_id = ? AND role_id = ?
-		`, account+":variable:api/key", account+":group:developers").Scan(&permCount)
-		if permCount != 2 {
-			t.Errorf("expected 2 permissions (read, execute), got %d", permCount)
-		}
+		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
-	t.Run("empty policy body", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/policies/"+account+"/policy/root", strings.NewReader(""))
+	t.Run("returns 404 for non-existent version", func(t *testing.T) {
+		resourcesStore := NewMockResourcesStore()
+		policyStore := NewMockPolicyStore()
+
+		policyID := "myorg:policy:root"
+		roleID := "myorg:user:admin"
+
+		resourcesStore.On("IsResourceVisible", policyID, roleID).Return(true)
+		policyStore.On("GetPolicyVersion", policyID, 99).Return(nil, errors.New("not found"))
+
+		handler := handleGetPolicy(resourcesStore, policyStore)
+
+		req := requestWithIdentity("GET", "/policies/myorg/policy/root?version=99", "", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"identifier": "root",
+		})
+
 		w := httptest.NewRecorder()
+		handler(w, req)
 
-		testServer.Router.ServeHTTP(w, req)
-
-		resp := w.Result()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("expected status 400 for empty body, got %d", resp.StatusCode)
-		}
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
-	t.Run("invalid YAML", func(t *testing.T) {
-		policy := `this is not valid yaml: [[[`
-		req := httptest.NewRequest("POST", "/policies/"+account+"/policy/root", strings.NewReader(policy))
+	t.Run("returns 400 for invalid version", func(t *testing.T) {
+		resourcesStore := NewMockResourcesStore()
+		policyStore := NewMockPolicyStore()
+
+		policyID := "myorg:policy:root"
+		roleID := "myorg:user:admin"
+
+		resourcesStore.On("IsResourceVisible", policyID, roleID).Return(true)
+
+		handler := handleGetPolicy(resourcesStore, policyStore)
+
+		req := requestWithIdentity("GET", "/policies/myorg/policy/root?version=invalid", "", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"identifier": "root",
+		})
+
 		w := httptest.NewRecorder()
+		handler(w, req)
 
-		testServer.Router.ServeHTTP(w, req)
-
-		resp := w.Result()
-		if resp.StatusCode != http.StatusUnprocessableEntity {
-			t.Errorf("expected status 422 for invalid YAML, got %d", resp.StatusCode)
-		}
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("PUT method (replace)", func(t *testing.T) {
-		policy := `- !user
-  id: charlie
-`
-		req := httptest.NewRequest("PUT", "/policies/"+account+"/policy/root", strings.NewReader(policy))
+	t.Run("returns empty list for policy with no versions", func(t *testing.T) {
+		resourcesStore := NewMockResourcesStore()
+		policyStore := NewMockPolicyStore()
+
+		policyID := "myorg:policy:root"
+		roleID := "myorg:user:admin"
+
+		resourcesStore.On("IsResourceVisible", policyID, roleID).Return(true)
+		policyStore.On("ListPolicyVersions", policyID).Return([]store.PolicyVersion{})
+
+		handler := handleGetPolicy(resourcesStore, policyStore)
+
+		req := requestWithIdentity("GET", "/policies/myorg/policy/root", "", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"identifier": "root",
+		})
+
 		w := httptest.NewRecorder()
+		handler(w, req)
 
-		testServer.Router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
 
-		resp := w.Result()
-		if resp.StatusCode != http.StatusCreated {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected status 201, got %d: %s", resp.StatusCode, string(body))
-		}
-	})
+		var versions []PolicyVersionResponse
+		err := json.Unmarshal(w.Body.Bytes(), &versions)
+		require.NoError(t, err)
 
-	t.Run("PATCH method (update)", func(t *testing.T) {
-		policy := `- !user
-  id: dave
-`
-		req := httptest.NewRequest("PATCH", "/policies/"+account+"/policy/root", strings.NewReader(policy))
-		w := httptest.NewRecorder()
-
-		testServer.Router.ServeHTTP(w, req)
-
-		resp := w.Result()
-		if resp.StatusCode != http.StatusCreated {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected status 201, got %d: %s", resp.StatusCode, string(body))
-		}
+		assert.Len(t, versions, 0)
 	})
 }

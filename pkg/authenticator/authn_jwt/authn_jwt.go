@@ -14,10 +14,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"gorm.io/gorm"
 
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
 // Config holds JWT authenticator configuration
@@ -46,12 +44,19 @@ type Config struct {
 	Audience string
 }
 
+// Store abstracts the storage operations needed by the JWT authenticator
+type Store interface {
+	// FetchSecret retrieves a decrypted secret value by resource ID
+	FetchSecret(resourceID string) (string, error)
+	// RoleExists checks if a role exists
+	RoleExists(roleID string) bool
+}
+
 // Authenticator implements JWT authentication
 type Authenticator struct {
-	db        *gorm.DB
-	cipher    slosilo.SymmetricCipher
+	store     Store
 	config    Config
-	account   string // Account for reading config from DB
+	account   string // Account for reading config from store
 	jwksCache *jwksCache
 }
 
@@ -63,10 +68,9 @@ type jwksCache struct {
 }
 
 // NewJWTAuthenticator creates a new JWT authenticator with static config
-func NewJWTAuthenticator(db *gorm.DB, cipher slosilo.SymmetricCipher, config Config) *Authenticator {
+func NewJWTAuthenticator(store Store, config Config) *Authenticator {
 	return &Authenticator{
-		db:     db,
-		cipher: cipher,
+		store:  store,
 		config: config,
 		jwksCache: &jwksCache{
 			keys: make(map[string]*rsa.PublicKey),
@@ -74,11 +78,10 @@ func NewJWTAuthenticator(db *gorm.DB, cipher slosilo.SymmetricCipher, config Con
 	}
 }
 
-// NewFromDB creates a JWT authenticator that reads config from Conjur variables
-func NewFromDB(db *gorm.DB, cipher slosilo.SymmetricCipher, serviceID, account string) *Authenticator {
+// NewFromStore creates a JWT authenticator that reads config from Conjur variables
+func NewFromStore(store Store, serviceID, account string) *Authenticator {
 	return &Authenticator{
-		db:     db,
-		cipher: cipher,
+		store: store,
 		config: Config{
 			ServiceID: serviceID,
 		},
@@ -126,9 +129,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, input authenticator.Au
 	}
 
 	// Verify the role exists and has access to this authenticator
-	var count int64
-	err = a.db.Raw(`SELECT COUNT(*) FROM roles WHERE role_id = ?`, roleID).Scan(&count).Error
-	if err != nil || count == 0 {
+	if !a.store.RoleExists(roleID) {
 		return "", errors.New("role not found or not authorized")
 	}
 
@@ -256,7 +257,7 @@ func (a *Authenticator) refreshJWKSIfNeeded(ctx context.Context) error {
 func (a *Authenticator) refreshJWKS(ctx context.Context) error {
 	// If account is set, load config from DB variables
 	if a.account != "" {
-		if err := a.loadConfigFromDB(); err != nil {
+		if err := a.loadConfigFromStore(); err != nil {
 			return fmt.Errorf("failed to load config from DB: %w", err)
 		}
 	}
@@ -305,25 +306,18 @@ func (a *Authenticator) refreshJWKS(ctx context.Context) error {
 	return a.parseJWKSBody(body)
 }
 
-// loadConfigFromDB loads authenticator configuration from Conjur variables
-func (a *Authenticator) loadConfigFromDB() error {
+// loadConfigFromStore loads authenticator configuration from Conjur variables
+func (a *Authenticator) loadConfigFromStore() error {
 	prefix := a.account + ":variable:conjur/authn-jwt/" + a.config.ServiceID + "/"
 
 	// Helper to get decrypted variable value
 	getVar := func(name string) (string, error) {
 		resourceID := prefix + name
-		var secret struct {
-			Value []byte `gorm:"column:value"`
-		}
-		result := a.db.Raw(`SELECT value FROM secrets WHERE resource_id = ? ORDER BY version DESC LIMIT 1`, resourceID).Scan(&secret)
-		if result.Error != nil || result.RowsAffected == 0 {
+		value, err := a.store.FetchSecret(resourceID)
+		if err != nil {
 			return "", nil // Variable not set
 		}
-		decrypted, err := a.cipher.Decrypt([]byte(resourceID), secret.Value)
-		if err != nil {
-			return "", err
-		}
-		return string(decrypted), nil
+		return value, nil
 	}
 
 	// Load public-keys

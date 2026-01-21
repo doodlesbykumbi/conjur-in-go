@@ -8,12 +8,11 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"gorm.io/gorm"
 
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/identity"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/model"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/policy/loader"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/store"
 )
 
 // PolicyLoadResponse is the response from loading a policy
@@ -39,7 +38,7 @@ func RegisterPoliciesEndpoints(s *server.Server) {
 	policiesRouter.Use(s.JWTMiddleware.Middleware)
 
 	// GET /policies/{account}/policy/{identifier} - Get policy versions
-	policiesRouter.HandleFunc("/{account}/policy/{identifier}", handleGetPolicy(s.DB)).Methods("GET")
+	policiesRouter.HandleFunc("/{account}/policy/{identifier}", handleGetPolicy(s.ResourcesStore, s.PolicyStore)).Methods("GET")
 
 	// POST /policies/{account}/policy/{identifier} - Load policy (create mode)
 	policiesRouter.HandleFunc("/{account}/policy/{identifier}", handlePolicyLoad(s)).Methods("POST")
@@ -52,7 +51,7 @@ func RegisterPoliciesEndpoints(s *server.Server) {
 }
 
 // handleGetPolicy returns policy versions
-func handleGetPolicy(db *gorm.DB) http.HandlerFunc {
+func handleGetPolicy(resourcesStore store.ResourcesStore, policyStore store.PolicyStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		account := vars["account"]
@@ -65,9 +64,7 @@ func handleGetPolicy(db *gorm.DB) http.HandlerFunc {
 		roleId := id.RoleID
 
 		// Check if user can see this policy
-		var canSee bool
-		db.Raw(`SELECT is_resource_visible(?, ?)`, policyID, roleId).Scan(&canSee)
-		if !canSee {
+		if !resourcesStore.IsResourceVisible(policyID, roleId) {
 			respondWithError(w, http.StatusForbidden, map[string]string{"error": "Forbidden"})
 			return
 		}
@@ -80,9 +77,8 @@ func handleGetPolicy(db *gorm.DB) http.HandlerFunc {
 				return
 			}
 
-			var pv model.PolicyVersion
-			result := db.Where("resource_id = ? AND version = ?", policyID, version).First(&pv)
-			if result.Error != nil {
+			pv, err := policyStore.GetPolicyVersion(policyID, version)
+			if err != nil {
 				respondWithError(w, http.StatusNotFound, map[string]string{"error": "Policy version not found"})
 				return
 			}
@@ -94,21 +90,7 @@ func handleGetPolicy(db *gorm.DB) http.HandlerFunc {
 		}
 
 		// Return list of versions
-		type versionRow struct {
-			Version      int
-			CreatedAt    time.Time
-			PolicySHA256 string
-			FinishedAt   *time.Time
-			ClientIP     string
-			RoleID       string
-		}
-		var rows []versionRow
-		db.Raw(`
-			SELECT version, created_at, policy_sha256, finished_at, client_ip, role_id
-			FROM policy_versions
-			WHERE resource_id = ?
-			ORDER BY version DESC
-		`, policyID).Scan(&rows)
+		rows := policyStore.ListPolicyVersions(policyID)
 
 		versions := make([]PolicyVersionResponse, 0, len(rows))
 		for _, row := range rows {
@@ -171,8 +153,7 @@ func handlePolicyLoad(s *server.Server) http.HandlerFunc {
 		dryRun := r.URL.Query().Get("dry_run") == "true"
 
 		// Load policy using the shared loader with versioning info
-		store := loader.NewGormStore(s.DB, s.Cipher)
-		l := loader.NewLoader(store, account).
+		l := loader.NewLoader(s.PolicyLoaderStore, account).
 			WithPolicyID(policyID).
 			WithRoleID(roleID).
 			WithClientIP(clientIP).

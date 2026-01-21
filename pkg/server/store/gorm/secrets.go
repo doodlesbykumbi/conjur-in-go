@@ -60,3 +60,40 @@ func (s *SecretsStore) CreateSecret(resourceID string, value []byte) error {
 func (s *SecretsStore) ExpireSecret(resourceID string) error {
 	return s.db.Model(&model.Secret{}).Where("resource_id = ?", resourceID).Update("expires_at", nil).Error
 }
+
+// FetchSecretsWithPrefix retrieves the latest version of all secrets matching a prefix pattern.
+func (s *SecretsStore) FetchSecretsWithPrefix(prefix string) ([]store.Secret, error) {
+	type secretRow struct {
+		ResourceID string `gorm:"column:resource_id"`
+		Value      []byte
+		Version    int
+	}
+	var rows []secretRow
+
+	// Get the latest version of each secret matching the pattern
+	err := s.db.Raw(`
+		WITH max_versions AS (
+			SELECT resource_id, MAX(version) as version
+			FROM secrets
+			WHERE resource_id LIKE ?
+			GROUP BY resource_id
+		)
+		SELECT s.resource_id, s.value, s.version
+		FROM secrets s
+		JOIN max_versions mv ON s.resource_id = mv.resource_id AND s.version = mv.version
+		ORDER BY s.resource_id
+	`, prefix+"%").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	secrets := make([]store.Secret, 0, len(rows))
+	for _, row := range rows {
+		secrets = append(secrets, store.Secret{
+			ResourceID: row.ResourceID,
+			Value:      row.Value,
+			Version:    row.Version,
+		})
+	}
+	return secrets, nil
+}

@@ -76,3 +76,23 @@ Feature: Secrets Management
     When I retrieve the variable "expirable/secret"
     Then the response status should be 200
     And the response body should be "expirable-value"
+
+  Scenario: Retrieve latest version of secret with multiple versions
+    Given I load the following policy to "root":
+      """
+      - !variable versioned/secret
+      """
+    When I store the value "version-1" in variable "versioned/secret"
+    And I store the value "version-2" in variable "versioned/secret"
+    And I store the value "version-3" in variable "versioned/secret"
+    And I retrieve the variable "versioned/secret"
+    Then the response status should be 200
+    And the response body should be "version-3"
+
+  Scenario: Expire non-variable kind returns 422
+    Given I load the following policy to "root":
+      """
+      - !group test-group
+      """
+    When I attempt to expire the resource "group" "test-group"
+    Then the response status should be 422

@@ -45,4 +45,7 @@ type ResourcesStore interface {
 
 	// PermittedRoles returns all roles that have a given privilege on a resource
 	PermittedRoles(privilege, resourceID string) []string
+
+	// ResourceExistsWithPrefix checks if any resource exists with the given prefix
+	ResourceExistsWithPrefix(prefix string) bool
 }

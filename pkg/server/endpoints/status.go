@@ -9,9 +9,9 @@ import (
 
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/config"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/store"
 
 	"github.com/gorilla/mux"
-	"gorm.io/gorm"
 )
 
 // AuthenticatorsResponse represents the response from /authenticators
@@ -28,18 +28,20 @@ type AuthenticatorStatusResponse struct {
 
 // RegisterStatusEndpoints registers the status and info endpoints
 func RegisterStatusEndpoints(s *server.Server) {
-	db := s.DB
+	healthStore := s.HealthStore
+	resourcesStore := s.ResourcesStore
+	cfg := s.Config
 
 	// GET / - Status page (no auth required) - returns HTML like Ruby
 	s.Router.HandleFunc("/", handleStatus()).Methods("GET")
 
 	// GET /authenticators - List authenticators (no auth required)
-	s.Router.HandleFunc("/authenticators", handleAuthenticators()).Methods("GET")
+	s.Router.HandleFunc("/authenticators", handleAuthenticators(cfg)).Methods("GET")
 
 	// GET /{authenticator}/{account}/status - Authenticator status (no auth required for now)
 	// This matches the Ruby pattern: /:authenticator(/:service_id)/:account/status
-	s.Router.HandleFunc("/{authenticator}/{account}/status", handleAuthenticatorStatus(db)).Methods("GET")
-	s.Router.HandleFunc("/{authenticator}/{service_id}/{account}/status", handleAuthenticatorStatus(db)).Methods("GET")
+	s.Router.HandleFunc("/{authenticator}/{account}/status", handleAuthenticatorStatus(healthStore, resourcesStore, cfg)).Methods("GET")
+	s.Router.HandleFunc("/{authenticator}/{service_id}/{account}/status", handleAuthenticatorStatus(healthStore, resourcesStore, cfg)).Methods("GET")
 }
 
 func handleStatus() http.HandlerFunc {
@@ -160,9 +162,8 @@ func handleStatus() http.HandlerFunc {
 	}
 }
 
-func handleAuthenticators() http.HandlerFunc {
+func handleAuthenticators(cfg *config.ConjurConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cfg := config.Get()
 
 		// Installed = all valid authenticator types
 		installed := make([]string, len(config.ValidAuthenticators))
@@ -206,7 +207,7 @@ type AuthenticatorStatusErrorResponse struct {
 	Error  string `json:"error"`
 }
 
-func handleAuthenticatorStatus(db *gorm.DB) http.HandlerFunc {
+func handleAuthenticatorStatus(healthStore store.HealthStore, resourcesStore store.ResourcesStore, cfg *config.ConjurConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		authnType := vars["authenticator"]
@@ -214,7 +215,7 @@ func handleAuthenticatorStatus(db *gorm.DB) http.HandlerFunc {
 		serviceID := vars["service_id"]
 
 		// Check 1: Database connectivity
-		if err := db.Exec("SELECT 1").Error; err != nil {
+		if err := healthStore.CheckConnectivity(); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_ = json.NewEncoder(w).Encode(AuthenticatorStatusErrorResponse{
@@ -225,7 +226,6 @@ func handleAuthenticatorStatus(db *gorm.DB) http.HandlerFunc {
 		}
 
 		// Check 2: Authenticator is enabled
-		cfg := config.Get()
 		authnName := authnType
 		if serviceID != "" {
 			authnName = authnType + "/" + serviceID
@@ -247,10 +247,7 @@ func handleAuthenticatorStatus(db *gorm.DB) http.HandlerFunc {
 			publicKeysVar := account + ":variable:conjur/authn-jwt/" + serviceID + "/public-keys"
 			jwksURIVar := account + ":variable:conjur/authn-jwt/" + serviceID + "/jwks-uri"
 
-			var count int64
-			db.Raw(`SELECT COUNT(*) FROM resources WHERE resource_id IN (?, ?)`, publicKeysVar, jwksURIVar).Scan(&count)
-
-			if count == 0 {
+			if !resourcesStore.ResourceExists(publicKeysVar) && !resourcesStore.ResourceExists(jwksURIVar) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusNotImplemented)
 				_ = json.NewEncoder(w).Encode(AuthenticatorStatusErrorResponse{

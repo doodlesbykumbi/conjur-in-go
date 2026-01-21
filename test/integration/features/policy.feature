@@ -46,3 +46,30 @@ Feature: Policy Management
     Then the response status should be 200
     And the response should indicate dry-run mode
     And user "testuser" should not exist in account "myorg"
+
+  Scenario: Empty policy body returns error
+    When I load an empty policy to "root"
+    Then the response status should be 400
+
+  Scenario: Invalid YAML returns error
+    When I attempt to load the following policy to "root":
+      """
+      this is not valid yaml: [[[
+      """
+    Then the response status should be 422
+
+  Scenario: PUT method replaces policy
+    When I replace the policy "root" with:
+      """yaml
+      - !user charlie
+      """
+    Then the response status should be 201
+    And user "charlie" should exist in account "myorg"
+
+  Scenario: PATCH method updates policy
+    When I update the policy "root" with:
+      """yaml
+      - !user dave
+      """
+    Then the response status should be 201
+    And user "dave" should exist in account "myorg"

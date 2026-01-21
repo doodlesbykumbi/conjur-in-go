@@ -5,45 +5,38 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 )
 
-func setupTestDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, slosilo.SymmetricCipher) {
-	mockDB, mock, err := sqlmock.New()
-	require.NoError(t, err)
+// mockStore implements Store for testing
+type mockStore struct {
+	secrets map[string]string
+	roles   map[string]bool
+}
 
-	gormDB, err := gorm.Open(
-		postgres.New(postgres.Config{
-			Conn:                 mockDB,
-			PreferSimpleProtocol: true,
-		}),
-		&gorm.Config{
-			Logger: logger.Default.LogMode(logger.Silent),
-		},
-	)
-	require.NoError(t, err)
-
-	dataKey := make([]byte, 32)
-	for i := range dataKey {
-		dataKey[i] = byte(i)
+func newMockStore() *mockStore {
+	return &mockStore{
+		secrets: make(map[string]string),
+		roles:   make(map[string]bool),
 	}
-	cipher, err := slosilo.NewSymmetric(dataKey)
-	require.NoError(t, err)
+}
 
-	return gormDB, mock, cipher
+func (m *mockStore) FetchSecret(resourceID string) (string, error) {
+	if val, ok := m.secrets[resourceID]; ok {
+		return val, nil
+	}
+	return "", nil
+}
+
+func (m *mockStore) RoleExists(roleID string) bool {
+	return m.roles[roleID]
 }
 
 func TestAuthenticator_Name(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
 	tests := []struct {
 		name      string
@@ -64,14 +57,14 @@ func TestAuthenticator_Name(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: tt.serviceID})
+			auth := NewJWTAuthenticator(store, Config{ServiceID: tt.serviceID})
 			assert.Equal(t, tt.expected, auth.Name())
 		})
 	}
 }
 
 func TestConfig_Validation(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
 	config := Config{
 		ServiceID:        "test-service",
@@ -81,7 +74,7 @@ func TestConfig_Validation(t *testing.T) {
 		Audience:         "my-app",
 	}
 
-	auth := NewJWTAuthenticator(db, cipher, config)
+	auth := NewJWTAuthenticator(store, config)
 
 	assert.Equal(t, "test-service", auth.config.ServiceID)
 	assert.Equal(t, "https://accounts.google.com", auth.config.ProviderURI)
@@ -112,12 +105,12 @@ func TestParseRSAPublicKey_InvalidE(t *testing.T) {
 }
 
 func TestLoadInlinePublicKeys(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
 	// Valid inline JWKS
 	publicKeys := `{"type":"jwks","value":{"keys":[{"kty":"RSA","kid":"test-key","n":"0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw","e":"AQAB"}]}}`
 
-	auth := NewJWTAuthenticator(db, cipher, Config{
+	auth := NewJWTAuthenticator(store, Config{
 		ServiceID:  "test",
 		PublicKeys: publicKeys,
 		Issuer:     "test-issuer",
@@ -134,11 +127,11 @@ func TestLoadInlinePublicKeys(t *testing.T) {
 }
 
 func TestLoadInlinePublicKeys_InvalidType(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
 	publicKeys := `{"type":"pem","value":"-----BEGIN PUBLIC KEY-----"}`
 
-	auth := NewJWTAuthenticator(db, cipher, Config{
+	auth := NewJWTAuthenticator(store, Config{
 		ServiceID:  "test",
 		PublicKeys: publicKeys,
 	})
@@ -149,9 +142,9 @@ func TestLoadInlinePublicKeys_InvalidType(t *testing.T) {
 }
 
 func TestLoadInlinePublicKeys_InvalidJSON(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
-	auth := NewJWTAuthenticator(db, cipher, Config{
+	auth := NewJWTAuthenticator(store, Config{
 		ServiceID:  "test",
 		PublicKeys: "not valid json",
 	})
@@ -162,9 +155,9 @@ func TestLoadInlinePublicKeys_InvalidJSON(t *testing.T) {
 }
 
 func TestAuthenticate_EmptyToken(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
-	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(store, Config{ServiceID: "test"})
 
 	_, err := auth.Authenticate(context.Background(), authenticator.AuthenticatorInput{
 		Account:     "myorg",
@@ -176,9 +169,9 @@ func TestAuthenticate_EmptyToken(t *testing.T) {
 }
 
 func TestExtractIdentity_TokenAppProperty(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
-	auth := NewJWTAuthenticator(db, cipher, Config{
+	auth := NewJWTAuthenticator(store, Config{
 		ServiceID:        "test",
 		TokenAppProperty: "email",
 	})
@@ -196,9 +189,9 @@ func TestExtractIdentity_TokenAppProperty(t *testing.T) {
 }
 
 func TestExtractIdentity_TokenAppPropertyMissing(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
-	auth := NewJWTAuthenticator(db, cipher, Config{
+	auth := NewJWTAuthenticator(store, Config{
 		ServiceID:        "test",
 		TokenAppProperty: "email",
 	})
@@ -215,9 +208,9 @@ func TestExtractIdentity_TokenAppPropertyMissing(t *testing.T) {
 }
 
 func TestExtractIdentity_LoginFromURL(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
-	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(store, Config{ServiceID: "test"})
 
 	token := &jwt.Token{
 		Claims: jwt.MapClaims{
@@ -231,9 +224,9 @@ func TestExtractIdentity_LoginFromURL(t *testing.T) {
 }
 
 func TestExtractIdentity_SubClaim(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
-	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(store, Config{ServiceID: "test"})
 
 	token := &jwt.Token{
 		Claims: jwt.MapClaims{
@@ -247,9 +240,9 @@ func TestExtractIdentity_SubClaim(t *testing.T) {
 }
 
 func TestExtractIdentity_NoIdentity(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
-	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(store, Config{ServiceID: "test"})
 
 	token := &jwt.Token{
 		Claims: jwt.MapClaims{
@@ -262,10 +255,10 @@ func TestExtractIdentity_NoIdentity(t *testing.T) {
 	assert.Contains(t, err.Error(), "no identity found")
 }
 
-func TestNewFromDB(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+func TestNewFromStore(t *testing.T) {
+	store := newMockStore()
 
-	auth := NewFromDB(db, cipher, "my-service", "myorg")
+	auth := NewFromStore(store, "my-service", "myorg")
 
 	assert.Equal(t, "authn-jwt/my-service", auth.Name())
 	assert.Equal(t, "myorg", auth.account)
@@ -273,9 +266,9 @@ func TestNewFromDB(t *testing.T) {
 }
 
 func TestParseJWKSBody_EmptyKeys(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
-	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(store, Config{ServiceID: "test"})
 
 	err := auth.parseJWKSBody([]byte(`{"keys":[]}`))
 	assert.NoError(t, err)
@@ -286,9 +279,9 @@ func TestParseJWKSBody_EmptyKeys(t *testing.T) {
 }
 
 func TestParseJWKSBody_InvalidJSON(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
-	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(store, Config{ServiceID: "test"})
 
 	err := auth.parseJWKSBody([]byte(`not json`))
 	assert.Error(t, err)
@@ -296,9 +289,9 @@ func TestParseJWKSBody_InvalidJSON(t *testing.T) {
 }
 
 func TestParseJWKSBody_NonRSAKey(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
-	auth := NewJWTAuthenticator(db, cipher, Config{ServiceID: "test"})
+	auth := NewJWTAuthenticator(store, Config{ServiceID: "test"})
 
 	// EC key should be skipped
 	err := auth.parseJWKSBody([]byte(`{"keys":[{"kty":"EC","kid":"ec-key","crv":"P-256","x":"abc","y":"def"}]}`))
@@ -311,9 +304,9 @@ func TestParseJWKSBody_NonRSAKey(t *testing.T) {
 }
 
 func TestRefreshJWKSIfNeeded_NotExpired(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
-	auth := NewJWTAuthenticator(db, cipher, Config{
+	auth := NewJWTAuthenticator(store, Config{
 		ServiceID:  "test",
 		PublicKeys: `{"type":"jwks","value":{"keys":[]}}`,
 	})
@@ -329,9 +322,9 @@ func TestRefreshJWKSIfNeeded_NotExpired(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
-	db, _, cipher := setupTestDB(t)
+	store := newMockStore()
 
-	auth := NewJWTAuthenticator(db, cipher, Config{
+	auth := NewJWTAuthenticator(store, Config{
 		ServiceID:  "test",
 		PublicKeys: `{"type":"jwks","value":{"keys":[]}}`,
 	})

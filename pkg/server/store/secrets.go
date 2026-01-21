@@ -31,4 +31,8 @@ type SecretsStore interface {
 
 	// ExpireSecret clears the expiration on all versions of a secret.
 	ExpireSecret(resourceID string) error
+
+	// FetchSecretsWithPrefix retrieves the latest version of all secrets matching a prefix pattern.
+	// Returns decrypted values.
+	FetchSecretsWithPrefix(prefix string) ([]Secret, error)
 }

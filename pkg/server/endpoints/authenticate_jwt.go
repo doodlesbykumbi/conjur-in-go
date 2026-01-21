@@ -15,12 +15,30 @@ import (
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/audit"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator/authn_jwt"
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/config"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
+	serverstore "github.com/doodlesbykumbi/conjur-in-go/pkg/server/store"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo/store"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/utils"
 )
+
+// jwtStoreAdapter adapts server stores to authn_jwt.Store interface
+type jwtStoreAdapter struct {
+	secretsStore   serverstore.SecretsStore
+	resourcesStore serverstore.ResourcesStore
+}
+
+func (a *jwtStoreAdapter) FetchSecret(resourceID string) (string, error) {
+	secret, err := a.secretsStore.FetchSecret(resourceID, "")
+	if err != nil {
+		return "", err
+	}
+	return string(secret.Value), nil
+}
+
+func (a *jwtStoreAdapter) RoleExists(roleID string) bool {
+	return a.resourcesStore.RoleExists(roleID)
+}
 
 // RegisterJWTAuthenticateEndpoint registers the JWT authentication endpoints
 func RegisterJWTAuthenticateEndpoint(s *server.Server) {
@@ -72,23 +90,27 @@ func handleJWTAuthenticate(s *server.Server, keystore *store.KeyStore) http.Hand
 
 		// Check if this authenticator is enabled via config
 		authName := "authn-jwt/" + serviceID
-		cfg := config.Get()
-		if !cfg.IsAuthenticatorEnabled(authName) {
+		if !s.Config.IsAuthenticatorEnabled(authName) {
 			http.Error(writer, "JWT authenticator not enabled", http.StatusForbidden)
 			return
 		}
 
-		// Create JWT authenticator on-demand - it reads config from DB
-		auth := authn_jwt.NewFromDB(s.DB, s.Cipher, serviceID, account)
-
 		// Check if the authenticator is actually configured (has webservice in policy)
-		// The webservice can be created with or without trailing slash depending on policy format
-		var count int64
-		webservicePattern := account + ":webservice:conjur/authn-jwt/" + serviceID + "%"
-		if err := s.DB.Raw(`SELECT COUNT(*) FROM resources WHERE resource_id LIKE ?`, webservicePattern).Scan(&count).Error; err != nil || count == 0 {
+		// The webservice can be created with or without trailing slash depending on whether
+		// it has an explicit ID in the policy (e.g., "!webservice" vs "!webservice\n  id: foo")
+		webserviceID := account + ":webservice:conjur/authn-jwt/" + serviceID
+		webserviceIDWithSlash := webserviceID + "/"
+		if !s.ResourcesStore.ResourceExists(webserviceID) && !s.ResourcesStore.ResourceExists(webserviceIDWithSlash) {
 			http.Error(writer, "JWT authenticator not configured", http.StatusNotFound)
 			return
 		}
+
+		// Create JWT authenticator on-demand - it reads config from store
+		jwtStore := &jwtStoreAdapter{
+			secretsStore:   s.SecretsStore,
+			resourcesStore: s.ResourcesStore,
+		}
+		auth := authn_jwt.NewFromStore(jwtStore, serviceID, account)
 
 		clientIP := request.RemoteAddr
 		if forwarded := request.Header.Get("X-Forwarded-For"); forwarded != "" {
@@ -146,7 +168,7 @@ func handleJWTAuthenticate(s *server.Server, keystore *store.KeyStore) http.Hand
 		// Generate Conjur token with TTL from config
 		// JWT authenticated identities are typically hosts
 		now := time.Now()
-		tokenTTL := cfg.HostTokenTTL()
+		tokenTTL := s.Config.HostTokenTTL()
 
 		newclaimsMap := map[string]interface{}{
 			"iat": now.Unix(),

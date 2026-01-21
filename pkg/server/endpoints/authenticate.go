@@ -35,6 +35,7 @@ func RegisterAuthenticateEndpoint(srv *server.Server) {
 	authStore := srv.AuthenticateStore
 	authzStore := srv.AuthzStore
 	keystore := srv.Keystore
+	cfg := srv.Config
 	router := srv.Router
 
 	// GET /authn/{account}/login - Login with Basic Auth, returns API key
@@ -58,7 +59,7 @@ func RegisterAuthenticateEndpoint(srv *server.Server) {
 	// POST /authn/{account}/{login}/authenticate - Authenticate with API key, returns JWT
 	router.HandleFunc(
 		"/authn/{account}/{login}/authenticate",
-		handleAuthenticate(authStore, keystore),
+		handleAuthenticate(authStore, keystore, cfg),
 	).Methods("POST")
 }
 
@@ -200,7 +201,7 @@ func handleUpdatePassword(authStore store.AuthenticateStore) http.HandlerFunc {
 	}
 }
 
-func handleAuthenticate(authStore store.AuthenticateStore, keystore *slstore.KeyStore) http.HandlerFunc {
+func handleAuthenticate(authStore store.AuthenticateStore, keystore *slstore.KeyStore, cfg *config.ConjurConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		requestApiKey, err := io.ReadAll(r.Body)
 		defer func() { _ = r.Body.Close() }()
@@ -276,7 +277,6 @@ func handleAuthenticate(authStore store.AuthenticateStore, keystore *slstore.Key
 			Success:           true,
 		})
 
-		cfg := config.Get()
 		var tokenTTL time.Duration
 		if strings.HasPrefix(login, "host/") {
 			tokenTTL = cfg.HostTokenTTL()

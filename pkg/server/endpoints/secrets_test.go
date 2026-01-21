@@ -1,264 +1,337 @@
 package endpoints
 
 import (
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/slosilo"
+	"github.com/gorilla/mux"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/identity"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/store"
 )
 
-func TestSecretsEndpoint(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
+func TestHandleFetchSecret(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		secretsStore := NewMockSecretsStore()
+		authzStore := NewMockAuthzStore()
 
-	dataKey := make([]byte, 32)
-	for i := range dataKey {
-		dataKey[i] = byte(i)
-	}
+		resourceID := "myorg:variable:db/password"
+		roleID := "myorg:user:admin"
+		secretValue := []byte("super-secret")
 
-	testServer, err := NewTestServer(dbURL, dataKey)
-	if err != nil {
-		t.Fatalf("failed to create test server: %v", err)
-	}
+		authzStore.On("IsRoleAllowedTo", roleID, "execute", resourceID).Return(true)
+		secretsStore.On("FetchSecret", resourceID, "").Return(&store.Secret{
+			ResourceID: resourceID,
+			Value:      secretValue,
+			Version:    1,
+		}, nil)
 
-	cipher, _ := slosilo.NewSymmetric(dataKey)
+		handler := handleFetchSecret(secretsStore, authzStore)
 
-	// Setup test account
-	account := "testsecrets"
-	apiKey := "test-api-key-secrets"
+		req := requestWithIdentity("GET", "/secrets/myorg/variable/db%2Fpassword", "", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"kind":       "variable",
+			"identifier": "db/password",
+		})
 
-	// Cleanup before and after
-	_ = CleanupTestData(testServer.DB, account)
-	defer func() { _ = CleanupTestData(testServer.DB, account) }()
-
-	err = SetupTestAccount(testServer.DB, cipher, account, apiKey)
-	if err != nil {
-		t.Fatalf("failed to setup test account: %v", err)
-	}
-
-	// Create a test variable
-	adminRoleId := account + ":user:admin"
-	variableId := "db/password"
-	resourceId := account + ":variable:" + variableId
-
-	err = CreateTestVariable(testServer.DB, account, variableId, adminRoleId)
-	if err != nil {
-		t.Fatalf("failed to create test variable: %v", err)
-	}
-
-	// Grant execute and update permissions to admin
-	err = GrantPermission(testServer.DB, "execute", resourceId, adminRoleId)
-	if err != nil {
-		t.Fatalf("failed to grant execute permission: %v", err)
-	}
-	err = GrantPermission(testServer.DB, "update", resourceId, adminRoleId)
-	if err != nil {
-		t.Fatalf("failed to grant update permission: %v", err)
-	}
-
-	// Generate auth token for admin
-	authToken, err := GenerateTestToken(testServer.DB, cipher, account, "admin")
-	if err != nil {
-		t.Fatalf("failed to generate auth token: %v", err)
-	}
-	authHeader := `Token token="` + authToken + `"`
-
-	// Register endpoints
-	RegisterSecretsEndpoints(testServer)
-
-	t.Run("store secret", func(t *testing.T) {
-		secretValue := "super-secret-password"
-		req := httptest.NewRequest("POST", "/secrets/"+account+"/variable/db%2Fpassword", strings.NewReader(secretValue))
-		req.Header.Set("Authorization", authHeader)
 		w := httptest.NewRecorder()
+		handler(w, req)
 
-		testServer.Router.ServeHTTP(w, req)
-
-		resp := w.Result()
-		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected status 201 or 200, got %d: %s", resp.StatusCode, string(body))
-		}
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, string(secretValue), w.Body.String())
+		secretsStore.AssertExpectations(t)
+		authzStore.AssertExpectations(t)
 	})
 
-	t.Run("retrieve secret", func(t *testing.T) {
-		// First store a secret
-		secretValue := "retrieve-test-secret"
-		storeReq := httptest.NewRequest("POST", "/secrets/"+account+"/variable/db%2Fpassword", strings.NewReader(secretValue))
-		storeReq.Header.Set("Authorization", authHeader)
-		storeW := httptest.NewRecorder()
-		testServer.Router.ServeHTTP(storeW, storeReq)
+	t.Run("not found", func(t *testing.T) {
+		secretsStore := NewMockSecretsStore()
+		authzStore := NewMockAuthzStore()
 
-		// Now retrieve it
-		req := httptest.NewRequest("GET", "/secrets/"+account+"/variable/db%2Fpassword", nil)
-		req.Header.Set("Authorization", authHeader)
+		resourceID := "myorg:variable:nonexistent"
+		roleID := "myorg:user:admin"
+
+		authzStore.On("IsRoleAllowedTo", roleID, "execute", resourceID).Return(true)
+		secretsStore.On("FetchSecret", resourceID, "").Return(nil, store.ErrSecretNotFound)
+
+		handler := handleFetchSecret(secretsStore, authzStore)
+
+		req := requestWithIdentity("GET", "/secrets/myorg/variable/nonexistent", "", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"kind":       "variable",
+			"identifier": "nonexistent",
+		})
+
 		w := httptest.NewRecorder()
+		handler(w, req)
 
-		testServer.Router.ServeHTTP(w, req)
-
-		resp := w.Result()
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, string(body))
-		}
-
-		body, _ := io.ReadAll(resp.Body)
-		if string(body) != secretValue {
-			t.Errorf("expected secret value %q, got %q", secretValue, string(body))
-		}
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
-	t.Run("retrieve non-existent secret", func(t *testing.T) {
-		// Create variable without storing a secret
-		_ = CreateTestVariable(testServer.DB, account, "empty/var", adminRoleId)
-		_ = GrantPermission(testServer.DB, "execute", account+":variable:empty/var", adminRoleId)
+	t.Run("forbidden without permission", func(t *testing.T) {
+		secretsStore := NewMockSecretsStore()
+		authzStore := NewMockAuthzStore()
 
-		req := httptest.NewRequest("GET", "/secrets/"+account+"/variable/empty%2Fvar", nil)
-		req.Header.Set("Authorization", authHeader)
+		resourceID := "myorg:variable:protected"
+		roleID := "myorg:user:unprivileged"
+
+		authzStore.On("IsRoleAllowedTo", roleID, "execute", resourceID).Return(false)
+
+		handler := handleFetchSecret(secretsStore, authzStore)
+
+		req := requestWithIdentity("GET", "/secrets/myorg/variable/protected", "", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"kind":       "variable",
+			"identifier": "protected",
+		})
+
 		w := httptest.NewRecorder()
+		handler(w, req)
 
-		testServer.Router.ServeHTTP(w, req)
-
-		resp := w.Result()
-		// Should return 404 or similar for non-existent secret
-		if resp.StatusCode == http.StatusOK {
-			t.Error("expected non-200 status for non-existent secret")
-		}
+		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
-	t.Run("retrieve secret with version", func(t *testing.T) {
-		// Store multiple versions
-		testServer.DB.Exec(`DELETE FROM secrets WHERE resource_id = ?`, account+":variable:db/password")
+	t.Run("expired secret returns 404", func(t *testing.T) {
+		secretsStore := NewMockSecretsStore()
+		authzStore := NewMockAuthzStore()
 
-		for i := 0; i < 3; i++ {
-			storeReq := httptest.NewRequest("POST", "/secrets/"+account+"/variable/db%2Fpassword",
-				strings.NewReader("secret-v"+string(rune('1'+i))))
-			storeReq.Header.Set("Authorization", authHeader)
-			storeW := httptest.NewRecorder()
-			testServer.Router.ServeHTTP(storeW, storeReq)
-		}
+		resourceID := "myorg:variable:expired"
+		roleID := "myorg:user:admin"
 
-		// Get latest (should be v3)
-		req := httptest.NewRequest("GET", "/secrets/"+account+"/variable/db%2Fpassword", nil)
-		req.Header.Set("Authorization", authHeader)
+		authzStore.On("IsRoleAllowedTo", roleID, "execute", resourceID).Return(true)
+		secretsStore.On("FetchSecret", resourceID, "").Return(nil, store.ErrSecretExpired)
+
+		handler := handleFetchSecret(secretsStore, authzStore)
+
+		req := requestWithIdentity("GET", "/secrets/myorg/variable/expired", "", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"kind":       "variable",
+			"identifier": "expired",
+		})
+
 		w := httptest.NewRecorder()
-		testServer.Router.ServeHTTP(w, req)
+		handler(w, req)
 
-		resp := w.Result()
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, string(body))
-		}
-
-		body, _ := io.ReadAll(resp.Body)
-		if string(body) != "secret-v3" {
-			t.Errorf("expected latest secret 'secret-v3', got %q", string(body))
-		}
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+}
 
-	t.Run("expire secret clears expiration", func(t *testing.T) {
-		// Create a new variable for expiration test
-		expiringVarId := "expiring/secret"
-		expiringResourceId := account + ":variable:" + expiringVarId
-		_ = CreateTestVariable(testServer.DB, account, expiringVarId, adminRoleId)
-		_ = GrantPermission(testServer.DB, "execute", expiringResourceId, adminRoleId)
-		_ = GrantPermission(testServer.DB, "update", expiringResourceId, adminRoleId)
+func TestHandleCreateSecret(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		secretsStore := NewMockSecretsStore()
+		authzStore := NewMockAuthzStore()
 
-		// Store a secret first
-		secretValue := "expiring-secret-value"
-		storeReq := httptest.NewRequest("POST", "/secrets/"+account+"/variable/expiring%2Fsecret", strings.NewReader(secretValue))
-		storeReq.Header.Set("Authorization", authHeader)
-		storeW := httptest.NewRecorder()
-		testServer.Router.ServeHTTP(storeW, storeReq)
+		resourceID := "myorg:variable:new/secret"
+		roleID := "myorg:user:admin"
 
-		// Set an expiration directly in DB (simulating rotation)
-		pastTime := time.Now().Add(-1 * time.Hour)
-		testServer.DB.Model(&struct{}{}).Table("secrets").Where("resource_id = ?", expiringResourceId).Update("expires_at", pastTime)
+		authzStore.On("IsRoleAllowedTo", roleID, "update", resourceID).Return(true)
+		secretsStore.On("CreateSecret", resourceID, []byte("my-secret-value")).Return(nil)
 
-		// Verify secret is now expired (should return 404)
-		getReq := httptest.NewRequest("GET", "/secrets/"+account+"/variable/expiring%2Fsecret", nil)
-		getReq.Header.Set("Authorization", authHeader)
-		getW := httptest.NewRecorder()
-		testServer.Router.ServeHTTP(getW, getReq)
-		if getW.Result().StatusCode != http.StatusNotFound {
-			t.Fatalf("expected 404 for expired secret, got %d", getW.Result().StatusCode)
-		}
+		handler := handleCreateSecret(secretsStore, authzStore)
 
-		// Now expire (clear expiration) via API
-		expireReq := httptest.NewRequest("POST", "/secrets/"+account+"/variable/expiring%2Fsecret?expirations", nil)
-		expireReq.Header.Set("Authorization", authHeader)
-		expireW := httptest.NewRecorder()
-		testServer.Router.ServeHTTP(expireW, expireReq)
+		req := requestWithIdentity("POST", "/secrets/myorg/variable/new%2Fsecret", "my-secret-value", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"kind":       "variable",
+			"identifier": "new/secret",
+		})
 
-		resp := expireW.Result()
-		if resp.StatusCode != http.StatusCreated {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected status 201, got %d: %s", resp.StatusCode, string(body))
-		}
-
-		// Retrieve the secret - should work now since expiration was cleared
-		getReq2 := httptest.NewRequest("GET", "/secrets/"+account+"/variable/expiring%2Fsecret", nil)
-		getReq2.Header.Set("Authorization", authHeader)
-		getW2 := httptest.NewRecorder()
-		testServer.Router.ServeHTTP(getW2, getReq2)
-
-		getResp := getW2.Result()
-		if getResp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(getResp.Body)
-			t.Fatalf("expected status 200 after clearing expiration, got %d: %s", getResp.StatusCode, string(body))
-		}
-	})
-
-	t.Run("retrieve expired secret returns 404", func(t *testing.T) {
-		// Create a new variable for expired test
-		expiredVarId := "expired/secret"
-		expiredResourceId := account + ":variable:" + expiredVarId
-		_ = CreateTestVariable(testServer.DB, account, expiredVarId, adminRoleId)
-		_ = GrantPermission(testServer.DB, "execute", expiredResourceId, adminRoleId)
-		_ = GrantPermission(testServer.DB, "update", expiredResourceId, adminRoleId)
-
-		// Store a secret
-		secretValue := "already-expired-secret"
-		req := httptest.NewRequest("POST", "/secrets/"+account+"/variable/expired%2Fsecret", strings.NewReader(secretValue))
-		req.Header.Set("Authorization", authHeader)
 		w := httptest.NewRecorder()
-		testServer.Router.ServeHTTP(w, req)
+		handler(w, req)
 
-		// Set expiration to past (simulating rotation that has expired)
-		pastTime := time.Now().Add(-1 * time.Hour)
-		testServer.DB.Model(&struct{}{}).Table("secrets").Where("resource_id = ?", expiredResourceId).Update("expires_at", pastTime)
-
-		// Retrieve the secret - should fail since expired
-		getReq := httptest.NewRequest("GET", "/secrets/"+account+"/variable/expired%2Fsecret", nil)
-		getReq.Header.Set("Authorization", authHeader)
-		getW := httptest.NewRecorder()
-		testServer.Router.ServeHTTP(getW, getReq)
-
-		getResp := getW.Result()
-		if getResp.StatusCode != http.StatusNotFound {
-			body, _ := io.ReadAll(getResp.Body)
-			t.Fatalf("expected status 404 for expired secret, got %d: %s", getResp.StatusCode, string(body))
-		}
+		assert.Equal(t, http.StatusCreated, w.Code)
+		secretsStore.AssertCalled(t, "CreateSecret", resourceID, []byte("my-secret-value"))
 	})
 
-	t.Run("expire non-variable kind returns 422", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/secrets/"+account+"/policy/some-policy?expirations", nil)
-		req.Header.Set("Authorization", authHeader)
+	t.Run("forbidden without permission", func(t *testing.T) {
+		secretsStore := NewMockSecretsStore()
+		authzStore := NewMockAuthzStore()
+
+		resourceID := "myorg:variable:protected"
+		roleID := "myorg:user:readonly"
+
+		authzStore.On("IsRoleAllowedTo", roleID, "update", resourceID).Return(false)
+
+		handler := handleCreateSecret(secretsStore, authzStore)
+
+		req := requestWithIdentity("POST", "/secrets/myorg/variable/protected", "value", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"kind":       "variable",
+			"identifier": "protected",
+		})
+
 		w := httptest.NewRecorder()
+		handler(w, req)
 
-		testServer.Router.ServeHTTP(w, req)
-
-		resp := w.Result()
-		if resp.StatusCode != http.StatusUnprocessableEntity {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected status 422 for non-variable kind, got %d: %s", resp.StatusCode, string(body))
-		}
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		secretsStore.AssertNotCalled(t, "CreateSecret", mock.Anything, mock.Anything)
 	})
+}
+
+func TestHandleExpireSecret(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		secretsStore := NewMockSecretsStore()
+		authzStore := NewMockAuthzStore()
+
+		resourceID := "myorg:variable:expiring"
+		roleID := "myorg:user:admin"
+
+		authzStore.On("IsRoleAllowedTo", roleID, "update", resourceID).Return(true)
+		secretsStore.On("ExpireSecret", resourceID).Return(nil)
+
+		handler := handleExpireSecret(secretsStore, authzStore)
+
+		req := requestWithIdentity("POST", "/secrets/myorg/variable/expiring?expirations", "", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"kind":       "variable",
+			"identifier": "expiring",
+		})
+
+		w := httptest.NewRecorder()
+		handler(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+		secretsStore.AssertCalled(t, "ExpireSecret", resourceID)
+	})
+
+	t.Run("non-variable kind returns 422", func(t *testing.T) {
+		secretsStore := NewMockSecretsStore()
+		authzStore := NewMockAuthzStore()
+
+		resourceID := "myorg:group:test"
+		roleID := "myorg:user:admin"
+
+		authzStore.On("IsRoleAllowedTo", roleID, "update", resourceID).Return(true)
+
+		handler := handleExpireSecret(secretsStore, authzStore)
+
+		req := requestWithIdentity("POST", "/secrets/myorg/group/test?expirations", "", "myorg", roleID)
+		req = withMuxVars(req, map[string]string{
+			"account":    "myorg",
+			"kind":       "group",
+			"identifier": "test",
+		})
+
+		w := httptest.NewRecorder()
+		handler(w, req)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	})
+}
+
+func TestHandleBatchFetchSecrets(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		secretsStore := NewMockSecretsStore()
+		authzStore := NewMockAuthzStore()
+
+		roleID := "myorg:user:admin"
+
+		authzStore.On("IsRoleAllowedTo", roleID, "execute", "myorg:variable:var1").Return(true)
+		authzStore.On("IsRoleAllowedTo", roleID, "execute", "myorg:variable:var2").Return(true)
+		secretsStore.On("FetchSecret", "myorg:variable:var1", "").Return(&store.Secret{Value: []byte("value1")}, nil)
+		secretsStore.On("FetchSecret", "myorg:variable:var2", "").Return(&store.Secret{Value: []byte("value2")}, nil)
+
+		handler := handleBatchFetchSecrets(secretsStore, authzStore)
+
+		req := requestWithIdentity("GET", "/secrets?variable_ids=myorg:variable:var1,myorg:variable:var2", "", "myorg", roleID)
+
+		w := httptest.NewRecorder()
+		handler(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("partial forbidden fails entire request", func(t *testing.T) {
+		secretsStore := NewMockSecretsStore()
+		authzStore := NewMockAuthzStore()
+
+		roleID := "myorg:user:limited"
+
+		// Handler checks permission then fetches in order, so first var gets fetched before second permission check
+		authzStore.On("IsRoleAllowedTo", roleID, "execute", "myorg:variable:allowed").Return(true)
+		secretsStore.On("FetchSecret", "myorg:variable:allowed", "").Return(&store.Secret{Value: []byte("value1")}, nil)
+		authzStore.On("IsRoleAllowedTo", roleID, "execute", "myorg:variable:forbidden").Return(false)
+
+		handler := handleBatchFetchSecrets(secretsStore, authzStore)
+
+		req := requestWithIdentity("GET", "/secrets?variable_ids=myorg:variable:allowed,myorg:variable:forbidden", "", "myorg", roleID)
+
+		w := httptest.NewRecorder()
+		handler(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("missing variable_ids returns 400", func(t *testing.T) {
+		secretsStore := NewMockSecretsStore()
+		authzStore := NewMockAuthzStore()
+
+		roleID := "myorg:user:admin"
+
+		handler := handleBatchFetchSecrets(secretsStore, authzStore)
+
+		req := requestWithIdentity("GET", "/secrets", "", "myorg", roleID)
+
+		w := httptest.NewRecorder()
+		handler(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+}
+
+func TestHandleBatchUpdateSecrets(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		secretsStore := NewMockSecretsStore()
+		authzStore := NewMockAuthzStore()
+
+		roleID := "myorg:user:admin"
+
+		authzStore.On("IsRoleAllowedTo", roleID, "update", "myorg:variable:var1").Return(true)
+		authzStore.On("IsRoleAllowedTo", roleID, "update", "myorg:variable:var2").Return(true)
+		secretsStore.On("CreateSecret", "myorg:variable:var1", []byte("value1")).Return(nil)
+		secretsStore.On("CreateSecret", "myorg:variable:var2", []byte("value2")).Return(nil)
+
+		handler := handleBatchUpdateSecrets(secretsStore, authzStore)
+
+		// Body must have "secrets" key per BatchSecretRequest struct
+		body := `{"secrets":{"myorg:variable:var1":"value1","myorg:variable:var2":"value2"}}`
+		req := requestWithIdentity("POST", "/secrets/myorg/values", body, "myorg", roleID)
+		req.Header.Set("Content-Type", "application/json")
+		req = withMuxVars(req, map[string]string{"account": "myorg"})
+
+		w := httptest.NewRecorder()
+		handler(w, req)
+
+		require.Equal(t, http.StatusCreated, w.Code)
+	})
+}
+
+// Helper to create a request with identity context
+func requestWithIdentity(method, url string, body string, account, roleID string) *http.Request {
+	var req *http.Request
+	if body != "" {
+		req = httptest.NewRequest(method, url, strings.NewReader(body))
+	} else {
+		req = httptest.NewRequest(method, url, nil)
+	}
+	ctx := identity.Set(req.Context(), &identity.Identity{
+		Account: account,
+		RoleID:  roleID,
+	})
+	return req.WithContext(ctx)
+}
+
+// Helper to set mux vars on request
+func withMuxVars(req *http.Request, vars map[string]string) *http.Request {
+	return mux.SetURLVars(req, vars)
 }

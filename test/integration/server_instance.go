@@ -45,7 +45,6 @@ type ServerInstance struct {
 	Config        ServerConfig
 	cancel        context.CancelFunc
 	listener      net.Listener
-	oldEnv        string    // Previous CONJUR_AUTHENTICATORS value for cleanup
 	serverProcess *exec.Cmd // For binary mode
 	inlineMode    bool
 }
@@ -63,13 +62,6 @@ func StartServer(tc *TestContext, dbURL string, cfg ServerConfig) (*ServerInstan
 func startInlineServerInstance(dbURL string, cipher slosilo.SymmetricCipher, cfg ServerConfig) (*ServerInstance, error) {
 	// Allocate a unique port
 	port := int(atomic.AddInt32(&portCounter, 1))
-
-	// Save old env and set new authenticators config
-	oldEnv := os.Getenv("CONJUR_AUTHENTICATORS")
-	_ = os.Setenv("CONJUR_AUTHENTICATORS", strings.Join(cfg.Authenticators, ","))
-
-	// Force config reload to pick up new authenticators
-	_ = config.Reload()
 
 	// Create DB connection for this server instance
 	db, err := gorm.Open(postgres.New(postgres.Config{
@@ -89,8 +81,14 @@ func startInlineServerInstance(dbURL string, cipher slosilo.SymmetricCipher, cfg
 	// Create keystore
 	keystore := store.NewKeyStore(db)
 
-	// Create server
-	s := server.NewServer(keystore, cipher, db, "127.0.0.1", fmt.Sprintf("%d", port))
+	// Create config with specified authenticators (dependency injection, no env vars)
+	conjurCfg := &config.ConjurConfig{
+		Authenticators:     cfg.Authenticators,
+		AuthnAPIKeyDefault: true,
+	}
+
+	// Create server with injected config
+	s := server.NewServer(keystore, cipher, db, conjurCfg, "127.0.0.1", fmt.Sprintf("%d", port))
 	endpoints.RegisterAll(s)
 
 	// Create a listener to get the actual port
@@ -108,7 +106,6 @@ func startInlineServerInstance(dbURL string, cipher slosilo.SymmetricCipher, cfg
 		Config:     cfg,
 		cancel:     cancel,
 		listener:   listener,
-		oldEnv:     oldEnv,
 		inlineMode: true,
 	}
 
@@ -166,7 +163,7 @@ func startBinaryServerInstance(binaryPath, dbURL string, dataKey []byte, cfg Ser
 	return instance, nil
 }
 
-// Stop shuts down the server instance and restores environment
+// Stop shuts down the server instance
 func (si *ServerInstance) Stop() {
 	if si.cancel != nil {
 		si.cancel()
@@ -177,14 +174,6 @@ func (si *ServerInstance) Stop() {
 	if si.serverProcess != nil && si.serverProcess.Process != nil {
 		_ = si.serverProcess.Process.Kill()
 		_ = si.serverProcess.Wait()
-	}
-	// Restore old environment (only for inline mode)
-	if si.inlineMode {
-		if si.oldEnv != "" {
-			_ = os.Setenv("CONJUR_AUTHENTICATORS", si.oldEnv)
-		} else {
-			_ = os.Unsetenv("CONJUR_AUTHENTICATORS")
-		}
 	}
 }
 

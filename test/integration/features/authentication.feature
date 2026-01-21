@@ -52,3 +52,8 @@ Feature: Authentication
       """
     When I authenticate as "host/blocked-host" in account "myorg" with the correct API key
     Then the response status should be 401
+
+  Scenario: Authentication with base64 encoding requested
+    When I authenticate as "admin" in account "myorg" with the correct API key requesting base64 encoding
+    Then the response status should be 200
+    And the response should be base64 encoded

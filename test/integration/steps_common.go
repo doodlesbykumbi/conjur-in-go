@@ -51,11 +51,8 @@ func (s *StepsContext) Cleanup() {
 	}
 }
 
-// db returns the database connection for this scenario (from the server)
+// db returns the database connection for this scenario
 func (s *StepsContext) db() *gorm.DB {
-	if s.server != nil && s.server.Server != nil {
-		return s.server.Server.DB
-	}
 	return s.tc.DB
 }
 
@@ -75,8 +72,10 @@ func (s *StepsContext) RegisterSteps(sc *godog.ScenarioContext) {
 
 	// Authentication steps
 	sc.Step(`^I authenticate as "([^"]*)" in account "([^"]*)" with the correct API key$`, s.iAuthenticateWithCorrectAPIKey)
+	sc.Step(`^I authenticate as "([^"]*)" in account "([^"]*)" with the correct API key requesting base64 encoding$`, s.iAuthenticateWithCorrectAPIKeyBase64)
 	sc.Step(`^I authenticate as "([^"]*)" in account "([^"]*)" with API key "([^"]*)"$`, s.iAuthenticateWithAPIKey)
 	sc.Step(`^a host "([^"]*)" exists in account "([^"]*)"$`, s.aHostExistsInAccount)
+	sc.Step(`^the response should be base64 encoded$`, s.theResponseShouldBeBase64Encoded)
 
 	// Response steps
 	sc.Step(`^the response status should be (\d+)$`, s.theResponseStatusShouldBe)
@@ -92,6 +91,10 @@ func (s *StepsContext) RegisterSteps(sc *godog.ScenarioContext) {
 
 	// Policy steps
 	sc.Step(`^I load the following policy to "([^"]*)":$`, s.iLoadPolicyTo)
+	sc.Step(`^I attempt to load the following policy to "([^"]*)":$`, s.iAttemptToLoadPolicyTo)
+	sc.Step(`^I load an empty policy to "([^"]*)"$`, s.iLoadEmptyPolicyTo)
+	sc.Step(`^I replace the policy "([^"]*)" with:$`, s.iReplacePolicyWith)
+	sc.Step(`^I update the policy "([^"]*)" with:$`, s.iUpdatePolicyWith)
 	sc.Step(`^I validate the following policy for "([^"]*)":$`, s.iValidatePolicyFor)
 	sc.Step(`^the policy version should be greater than (\d+)$`, s.thePolicyVersionShouldBeGreaterThan)
 	sc.Step(`^user "([^"]*)" should exist in account "([^"]*)"$`, s.userShouldExistInAccount)
@@ -112,15 +115,14 @@ func (s *StepsContext) RegisterSteps(sc *godog.ScenarioContext) {
 	// Expiration steps
 	sc.Step(`^the variable "([^"]*)" has expired$`, s.theVariableHasExpired)
 	sc.Step(`^I expire the variable "([^"]*)"$`, s.iExpireTheVariable)
+	sc.Step(`^I attempt to expire the resource "([^"]*)" "([^"]*)"$`, s.iAttemptToExpireResource)
 
 	// JWT Authentication steps
 	sc.Step(`^I set authn-jwt "([^"]*)" variable "([^"]*)" with test JWKS$`, s.iSetAuthnJWTVariableWithTestJWKS)
 	sc.Step(`^I set authn-jwt "([^"]*)" variable "([^"]*)" to "([^"]*)"$`, s.iSetAuthnJWTVariableTo)
-	sc.Step(`^the authn-jwt "([^"]*)" authenticator is enabled$`, s.theAuthnJWTAuthenticatorIsEnabled)
 	sc.Step(`^I authenticate via authn-jwt with a valid JWT token for host "([^"]*)"$`, s.iAuthenticateViaAuthnJWTWithValidTokenForHost)
 	sc.Step(`^I authenticate via authn-jwt with an invalid JWT token for host "([^"]*)"$`, s.iAuthenticateViaAuthnJWTWithInvalidTokenForHost)
 	sc.Step(`^the response should contain a Conjur access token$`, s.theResponseShouldContainConjurAccessToken)
-	sc.Step(`^a JWT authenticator "([^"]*)" is configured but not enabled$`, s.aJWTAuthenticatorIsConfiguredButNotEnabled)
 	sc.Step(`^I authenticate via authn-jwt with service "([^"]*)"$`, s.iAuthenticateViaAuthnJWTWithService)
 
 	// Account management steps
@@ -136,6 +138,13 @@ func (s *StepsContext) RegisterSteps(sc *godog.ScenarioContext) {
 	// Health check steps
 	sc.Step(`^I check the status of "([^"]*)" for account "([^"]*)"$`, s.iCheckTheStatusOfForAccount)
 	sc.Step(`^the response should indicate status "([^"]*)"$`, s.theResponseShouldIndicateStatus)
+
+	// Whoami steps
+	sc.Step(`^I request whoami$`, s.iRequestWhoami)
+	sc.Step(`^I request whoami without authentication$`, s.iRequestWhoamiWithoutAuth)
+	sc.Step(`^I request whoami with invalid token$`, s.iRequestWhoamiWithInvalidToken)
+	sc.Step(`^the whoami response should show account "([^"]*)"$`, s.theWhoamiResponseShouldShowAccount)
+	sc.Step(`^the whoami response should show username "([^"]*)"$`, s.theWhoamiResponseShouldShowUsername)
 }
 
 // Background steps - all servers use isolated schemas by default
@@ -286,6 +295,43 @@ func (s *StepsContext) iAuthenticateWithAPIKey(login, account, apiKey string) er
 		}
 	}
 
+	return nil
+}
+
+func (s *StepsContext) iAuthenticateWithCorrectAPIKeyBase64(login, account string) error {
+	apiKey := s.adminAPIKey
+	if strings.HasPrefix(login, "host/") {
+		hostName := strings.TrimPrefix(login, "host/")
+		apiKey = s.hostAPIKeys[hostName]
+	} else if login != "admin" {
+		if key, ok := s.hostAPIKeys[login]; ok {
+			apiKey = key
+		}
+	}
+
+	encodedLogin := url.PathEscape(login)
+	reqURL := fmt.Sprintf("%s/authn/%s/%s/authenticate", s.serverURL, account, encodedLogin)
+	req, err := http.NewRequest("POST", reqURL, strings.NewReader(apiKey))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept-Encoding", "base64")
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) theResponseShouldBeBase64Encoded() error {
+	contentEncoding := s.response.Header.Get("Content-Encoding")
+	if contentEncoding != "base64" {
+		return fmt.Errorf("expected Content-Encoding: base64, got %q", contentEncoding)
+	}
 	return nil
 }
 
@@ -494,6 +540,82 @@ func (s *StepsContext) iLoadPolicyTo(policyId string, policyYAML *godog.DocStrin
 		}
 	}
 
+	return err
+}
+
+func (s *StepsContext) iAttemptToLoadPolicyTo(policyId string, policyYAML *godog.DocString) error {
+	url := fmt.Sprintf("%s/policies/%s/policy/%s", s.serverURL, s.account, policyId)
+	req, err := http.NewRequest("POST", url, bytes.NewReader([]byte(policyYAML.Content)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", `Token token="`+s.authToken+`"`)
+	req.Header.Set("Content-Type", "application/x-yaml")
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) iLoadEmptyPolicyTo(policyId string) error {
+	url := fmt.Sprintf("%s/policies/%s/policy/%s", s.serverURL, s.account, policyId)
+	req, err := http.NewRequest("POST", url, bytes.NewReader([]byte("")))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", `Token token="`+s.authToken+`"`)
+	req.Header.Set("Content-Type", "application/x-yaml")
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) iReplacePolicyWith(policyId string, policyYAML *godog.DocString) error {
+	url := fmt.Sprintf("%s/policies/%s/policy/%s", s.serverURL, s.account, policyId)
+	req, err := http.NewRequest("PUT", url, bytes.NewReader([]byte(policyYAML.Content)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", `Token token="`+s.authToken+`"`)
+	req.Header.Set("Content-Type", "application/x-yaml")
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) iUpdatePolicyWith(policyId string, policyYAML *godog.DocString) error {
+	url := fmt.Sprintf("%s/policies/%s/policy/%s", s.serverURL, s.account, policyId)
+	req, err := http.NewRequest("PATCH", url, bytes.NewReader([]byte(policyYAML.Content)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", `Token token="`+s.authToken+`"`)
+	req.Header.Set("Content-Type", "application/x-yaml")
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
 	return err
 }
 
@@ -720,6 +842,25 @@ func (s *StepsContext) iExpireTheVariable(variableId string) error {
 	return err
 }
 
+func (s *StepsContext) iAttemptToExpireResource(kind, resourceId string) error {
+	encodedId := url.PathEscape(resourceId)
+	url := fmt.Sprintf("%s/secrets/%s/%s/%s?expirations", s.serverURL, s.account, kind, encodedId)
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", `Token token="`+s.authToken+`"`)
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
 // Account management steps
 
 func (s *StepsContext) iRequestTheAccountsList() error {
@@ -888,6 +1029,89 @@ func (s *StepsContext) theResponseShouldIndicateStatus(expectedStatus string) er
 
 	if response.Status != expectedStatus {
 		return fmt.Errorf("expected status %q, got %q (body: %s)", expectedStatus, response.Status, string(s.responseBody))
+	}
+	return nil
+}
+
+// Whoami steps
+
+func (s *StepsContext) iRequestWhoami() error {
+	url := fmt.Sprintf("%s/whoami", s.serverURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", `Token token="`+s.authToken+`"`)
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) iRequestWhoamiWithoutAuth() error {
+	url := fmt.Sprintf("%s/whoami", s.serverURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) iRequestWhoamiWithInvalidToken() error {
+	url := fmt.Sprintf("%s/whoami", s.serverURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", `Token token="invalid-token"`)
+
+	s.response, err = s.tc.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	s.responseBody, err = io.ReadAll(s.response.Body)
+	_ = s.response.Body.Close()
+	return err
+}
+
+func (s *StepsContext) theWhoamiResponseShouldShowAccount(expectedAccount string) error {
+	var response struct {
+		Account string `json:"account"`
+	}
+	if err := json.Unmarshal(s.responseBody, &response); err != nil {
+		return fmt.Errorf("failed to parse whoami response: %w", err)
+	}
+
+	if response.Account != expectedAccount {
+		return fmt.Errorf("expected account %q, got %q", expectedAccount, response.Account)
+	}
+	return nil
+}
+
+func (s *StepsContext) theWhoamiResponseShouldShowUsername(expectedUsername string) error {
+	var response struct {
+		Username string `json:"username"`
+	}
+	if err := json.Unmarshal(s.responseBody, &response); err != nil {
+		return fmt.Errorf("failed to parse whoami response: %w", err)
+	}
+
+	if response.Username != expectedUsername {
+		return fmt.Errorf("expected username %q, got %q", expectedUsername, response.Username)
 	}
 	return nil
 }

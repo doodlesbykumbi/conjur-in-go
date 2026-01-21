@@ -10,6 +10,8 @@ import (
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/config"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/policy/loader"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/middleware"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/store"
 	gormstore "github.com/doodlesbykumbi/conjur-in-go/pkg/server/store/gorm"
@@ -21,7 +23,7 @@ type Server struct {
 	Keystore      *slstore.KeyStore
 	Cipher        slosilo.SymmetricCipher
 	Router        *mux.Router
-	DB            *gorm.DB
+	Config        *config.ConjurConfig
 	JWTMiddleware *middleware.JWTAuthenticator
 	srv           *http.Server
 	listener      net.Listener
@@ -35,16 +37,19 @@ type Server struct {
 	HostFactoryStore  store.HostFactoryStore
 	AuthenticateStore store.AuthenticateStore
 	AccountsStore     store.AccountsStore
+	HealthStore       store.HealthStore
+	PolicyStore       store.PolicyStore
+	PolicyLoaderStore loader.Store
 }
 
 func NewServer(
 	keystore *slstore.KeyStore,
 	cipher slosilo.SymmetricCipher,
 	db *gorm.DB,
+	cfg *config.ConjurConfig,
 	host string,
 	port string,
 ) *Server {
-
 	router := mux.NewRouter().UseEncodedPath().StrictSlash(true)
 	srv := &http.Server{
 		Handler: handlers.LoggingHandler(os.Stdout, router),
@@ -58,7 +63,7 @@ func NewServer(
 		Keystore:      keystore,
 		Cipher:        cipher,
 		Router:        router,
-		DB:            db,
+		Config:        cfg,
 		JWTMiddleware: middleware.NewJWTAuthenticator(keystore),
 		srv:           srv,
 
@@ -71,6 +76,9 @@ func NewServer(
 		HostFactoryStore:  gormstore.NewHostFactoryStore(db, cipher),
 		AuthenticateStore: gormstore.NewAuthenticateStore(db, cipher),
 		AccountsStore:     gormstore.NewAccountsStore(db, keystore, cipher),
+		HealthStore:       gormstore.NewHealthStore(db),
+		PolicyStore:       gormstore.NewPolicyStore(db),
+		PolicyLoaderStore: loader.NewGormStore(db, cipher),
 	}
 }
 

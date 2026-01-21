@@ -42,7 +42,6 @@ Feature: JWT Authentication
     And I set authn-jwt "raw" variable "public-keys" with test JWKS
     And I set authn-jwt "raw" variable "issuer" to "test-issuer"
     And I set authn-jwt "raw" variable "token-app-property" to "sub"
-    And the authn-jwt "raw" authenticator is enabled
     When I authenticate via authn-jwt with a valid JWT token for host "myapp"
     Then the response status should be 200
     And the response should contain a Conjur access token
@@ -78,12 +77,11 @@ Feature: JWT Authentication
       """
     And I set authn-jwt "raw" variable "public-keys" with test JWKS
     And I set authn-jwt "raw" variable "issuer" to "test-issuer"
-    And the authn-jwt "raw" authenticator is enabled
     When I authenticate via authn-jwt with an invalid JWT token for host "myapp"
     Then the response status should be 401
 
   Scenario: JWT authentication fails when authenticator not enabled
-    Given a JWT authenticator "disabled" is configured but not enabled
+    # Authenticator "disabled" is not in CONJUR_AUTHENTICATORS, so it returns 403
     When I authenticate via authn-jwt with service "disabled"
     Then the response status should be 403
 

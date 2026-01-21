@@ -13,8 +13,6 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-
-	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator/authn_jwt"
 )
 
 var (
@@ -76,17 +74,6 @@ func (s *StepsContext) setVariableValue(variableID, value string) error {
 	return nil
 }
 
-// theAuthnJWTAuthenticatorIsEnabled enables the JWT authenticator
-func (s *StepsContext) theAuthnJWTAuthenticatorIsEnabled(serviceID string) error {
-	jwtServiceID = serviceID
-	// JWT authenticators are created on-demand during request handling.
-	// For binary mode, the server reads config from CONJUR_AUTHENTICATORS.
-	// For inline mode, the config is also read from CONJUR_AUTHENTICATORS.
-	// Just validate the authenticator can be created.
-	_ = authn_jwt.NewFromDB(s.tc.DB, s.tc.Cipher, serviceID, s.account)
-	return nil
-}
-
 func (s *StepsContext) iAuthenticateViaAuthnJWTWithValidTokenForHost(hostID string) error {
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iss": "test-issuer", "sub": s.account + ":host:" + hostID, "exp": time.Now().Add(time.Hour).Unix(),
@@ -134,14 +121,6 @@ func (s *StepsContext) theResponseShouldContainConjurAccessToken() error {
 	if len(s.responseBody) < 50 {
 		return fmt.Errorf("response too short: %s", string(s.responseBody))
 	}
-	return nil
-}
-
-func (s *StepsContext) aJWTAuthenticatorIsConfiguredButNotEnabled(serviceID string) error {
-	// JWT authenticators are created on-demand. This just validates it can be created.
-	_ = authn_jwt.NewJWTAuthenticator(s.tc.DB, s.tc.Cipher, authn_jwt.Config{
-		ServiceID: serviceID, PublicKeys: `{"type":"jwks","value":{"keys":[]}}`, Issuer: "test",
-	})
 	return nil
 }
 

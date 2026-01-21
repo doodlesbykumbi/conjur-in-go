@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/authenticator/authn"
+	"github.com/doodlesbykumbi/conjur-in-go/pkg/config"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/db"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server"
 	"github.com/doodlesbykumbi/conjur-in-go/pkg/server/endpoints"
@@ -102,7 +103,8 @@ By default, database migrations are run on startup. Use --no-migrate to skip.`,
 
 		host, _ := cmd.Flags().GetString("bind-address")
 		port, _ := cmd.Flags().GetString("port")
-		s := server.NewServer(keystore, cipher, database, host, port)
+		cfg := config.Get()
+		s := server.NewServer(keystore, cipher, database, cfg, host, port)
 
 		endpoints.RegisterAll(s)
 

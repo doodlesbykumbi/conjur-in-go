@@ -158,6 +158,13 @@ func (s *ResourcesStore) RoleExists(roleID string) bool {
 	return exists
 }
 
+// ResourceExistsWithPrefix checks if any resource exists with the given prefix
+func (s *ResourcesStore) ResourceExistsWithPrefix(prefix string) bool {
+	var exists bool
+	s.db.Raw(`SELECT EXISTS(SELECT 1 FROM resources WHERE resource_id LIKE ?)`, prefix+"%").Scan(&exists)
+	return exists
+}
+
 // PermittedRoles returns all roles that have a given privilege on a resource
 func (s *ResourcesStore) PermittedRoles(privilege, resourceID string) []string {
 	type roleRow struct {
