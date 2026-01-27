@@ -89,7 +89,7 @@ func startInlineServerInstance(dbURL string, cipher slosilo.SymmetricCipher, cfg
 
 	// Create server with injected config
 	s := server.NewServer(keystore, cipher, db, conjurCfg, "127.0.0.1", fmt.Sprintf("%d", port))
-	endpoints.RegisterAll(s)
+	endpoints.RegisterOpenAPI(s)
 
 	// Create a listener to get the actual port
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))

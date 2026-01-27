@@ -1,0 +1,1011 @@
+openapi: "3.0.3"
+
+info:
+  title: Conjur API
+  description: OpenAPI specification for Conjur - compatible with CyberArk Conjur
+  version: "5.0.0"
+  license:
+    name: Apache-2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+
+servers:
+  - url: /
+
+tags:
+  - name: status
+    description: Server status
+  - name: accounts
+    description: Account management
+  - name: authentication
+    description: Authentication endpoints
+  - name: secrets
+    description: Secret management
+  - name: policies
+    description: Policy management
+  - name: resources
+    description: Resource management
+  - name: roles
+    description: Role management
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: Basic authentication with username and API key
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Conjur access token
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+    WhoAmI:
+      type: object
+      required:
+        - account
+        - username
+      properties:
+        account:
+          type: string
+        username:
+          type: string
+        client_ip:
+          type: string
+        token_issued_at:
+          type: string
+          format: date-time
+
+    AuthenticatorsResponse:
+      type: object
+      properties:
+        installed:
+          type: array
+          items:
+            type: string
+        enabled:
+          type: array
+          items:
+            type: string
+        configured:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+
+    AccountCreateResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        api_key:
+          type: string
+
+    PolicyLoadResponse:
+      type: object
+      properties:
+        created_roles:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              id:
+                type: string
+              api_key:
+                type: string
+        version:
+          type: integer
+        dry_run:
+          type: boolean
+
+    PolicyVersion:
+      type: object
+      properties:
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        policy_sha256:
+          type: string
+        finished_at:
+          type: string
+          format: date-time
+        client_ip:
+          type: string
+        role_id:
+          type: string
+
+    Resource:
+      type: object
+      properties:
+        id:
+          type: string
+        owner:
+          type: string
+        policy:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: object
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+
+    Role:
+      type: object
+      properties:
+        id:
+          type: string
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/MembershipGrant"
+
+    MembershipGrant:
+      type: object
+      properties:
+        role:
+          type: string
+        member:
+          type: string
+        admin_option:
+          type: boolean
+        ownership:
+          type: boolean
+        policy:
+          type: string
+
+  parameters:
+    Account:
+      name: account
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Organization account name
+
+    AccountId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Account ID
+
+    Kind:
+      name: kind
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Resource kind
+
+    Identifier:
+      name: identifier
+      in: path
+      required: true
+      schema:
+        type: string
+      description: URL-encoded resource identifier
+
+    Login:
+      name: login
+      in: path
+      required: true
+      schema:
+        type: string
+      description: URL-encoded login name
+
+    ServiceId:
+      name: service_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Authenticator service ID
+
+    Authenticator:
+      name: authenticator
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Authenticator type
+
+paths:
+  # ========== STATUS ==========
+  /:
+    get:
+      operationId: getStatus
+      summary: Server status page
+      tags: [status]
+      security: []
+      responses:
+        "200":
+          description: Status page (HTML or JSON)
+          content:
+            text/html:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+
+  /whoami:
+    get:
+      operationId: whoami
+      summary: Returns information about the authenticated identity
+      tags: [status]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Identity information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhoAmI"
+        "401":
+          description: Unauthorized
+
+  /authenticators:
+    get:
+      operationId: getAuthenticators
+      summary: List installed authenticators
+      tags: [status]
+      security: []
+      responses:
+        "200":
+          description: List of authenticators
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthenticatorsResponse"
+
+  /{authenticator}/{account}/status:
+    get:
+      operationId: getAuthenticatorStatus
+      summary: Get authenticator status
+      tags: [status]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Authenticator"
+        - $ref: "#/components/parameters/Account"
+      responses:
+        "200":
+          description: Authenticator status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthenticatorsResponse"
+        "501":
+          description: Authenticator not enabled
+
+  /{authenticator}/{service_id}/{account}/status:
+    get:
+      operationId: getAuthenticatorServiceStatus
+      summary: Get authenticator service status
+      tags: [status]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Authenticator"
+        - $ref: "#/components/parameters/ServiceId"
+        - $ref: "#/components/parameters/Account"
+      responses:
+        "200":
+          description: Authenticator status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthenticatorsResponse"
+        "501":
+          description: Authenticator not enabled
+
+  # ========== ACCOUNTS ==========
+  /accounts:
+    get:
+      operationId: listAccounts
+      summary: List all accounts
+      tags: [accounts]
+      security: []
+      responses:
+        "200":
+          description: List of accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+    post:
+      operationId: createAccount
+      summary: Create a new account
+      tags: [accounts]
+      security: []
+      parameters:
+        - name: id
+          in: query
+          schema:
+            type: string
+          description: Account name
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountCreateResponse"
+        "400":
+          description: Invalid account name
+        "409":
+          description: Account already exists
+
+  /accounts/{id}:
+    delete:
+      operationId: deleteAccount
+      summary: Delete an account
+      tags: [accounts]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/AccountId"
+      responses:
+        "204":
+          description: Account deleted
+        "404":
+          description: Account not found
+
+  # ========== AUTHENTICATION ==========
+  /authn/{account}/login:
+    get:
+      operationId: login
+      summary: Get API key for a user
+      tags: [authentication]
+      security:
+        - basicAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+      responses:
+        "200":
+          description: API key
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Invalid credentials
+
+  /authn/{account}/api_key:
+    put:
+      operationId: rotateApiKey
+      summary: Rotate API key
+      tags: [authentication]
+      security:
+        - basicAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - name: role
+          in: query
+          schema:
+            type: string
+          description: Target role to rotate key for
+      responses:
+        "200":
+          description: New API key
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Invalid credentials
+        "403":
+          description: Forbidden
+
+  /authn/{account}/password:
+    put:
+      operationId: changePassword
+      summary: Change password
+      tags: [authentication]
+      security:
+        - basicAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              description: New password
+      responses:
+        "204":
+          description: Password changed
+        "401":
+          description: Invalid credentials
+        "403":
+          description: Hosts cannot change passwords
+
+  /authn/{account}/{login}/authenticate:
+    post:
+      operationId: authenticate
+      summary: Authenticate and get access token
+      tags: [authentication]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Login"
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              description: API key
+      responses:
+        "200":
+          description: Access token
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: Invalid credentials
+
+  /authn-jwt/{service_id}/{account}/authenticate:
+    post:
+      operationId: authenticateJwt
+      summary: Authenticate using JWT
+      tags: [authentication]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ServiceId"
+        - $ref: "#/components/parameters/Account"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                jwt:
+                  type: string
+      responses:
+        "200":
+          description: Access token
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: Invalid JWT
+
+  # ========== SECRETS ==========
+  /secrets/{account}/{kind}/{identifier}:
+    get:
+      operationId: getSecret
+      summary: Fetch a secret value
+      tags: [secrets]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Kind"
+        - $ref: "#/components/parameters/Identifier"
+        - name: version
+          in: query
+          schema:
+            type: integer
+          description: Secret version (default latest)
+      responses:
+        "200":
+          description: Secret value
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "403":
+          description: Forbidden
+        "404":
+          description: Secret not found
+
+    post:
+      operationId: createSecret
+      summary: Create or update a secret value, or expire it
+      tags: [secrets]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Kind"
+        - $ref: "#/components/parameters/Identifier"
+        - name: expirations
+          in: query
+          schema:
+            type: string
+          description: If present, expire the secret instead of setting value
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Secret created/expired
+        "403":
+          description: Forbidden
+        "422":
+          description: Invalid kind for expiration
+
+  /secrets:
+    get:
+      operationId: batchGetSecrets
+      summary: Fetch multiple secrets
+      tags: [secrets]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: variable_ids
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Comma-separated list of variable IDs
+      responses:
+        "200":
+          description: Map of secret values
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+        "403":
+          description: Forbidden
+        "404":
+          description: One or more secrets not found
+
+  /secrets/{account}/values:
+    post:
+      operationId: batchUpdateSecrets
+      summary: Update multiple secrets
+      tags: [secrets]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                secrets:
+                  type: object
+                  additionalProperties:
+                    type: string
+      responses:
+        "201":
+          description: Secrets updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated:
+                    type: array
+                    items:
+                      type: string
+                  errors:
+                    type: object
+                    additionalProperties:
+                      type: string
+        "207":
+          description: Partial success
+
+  # ========== POLICIES ==========
+  /policies/{account}/policy/{identifier}:
+    get:
+      operationId: getPolicy
+      summary: Get policy versions
+      tags: [policies]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Identifier"
+        - name: version
+          in: query
+          schema:
+            type: integer
+          description: Specific version to retrieve
+      responses:
+        "200":
+          description: Policy versions or policy text
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PolicyVersion"
+            application/x-yaml:
+              schema:
+                type: string
+        "403":
+          description: Forbidden
+
+    post:
+      operationId: loadPolicy
+      summary: Append to existing policy
+      tags: [policies]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Identifier"
+        - name: dry_run
+          in: query
+          schema:
+            type: boolean
+          description: Validate without applying
+      requestBody:
+        required: true
+        content:
+          application/x-yaml:
+            schema:
+              type: string
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "201":
+          description: Policy loaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyLoadResponse"
+        "200":
+          description: Dry run successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyLoadResponse"
+        "422":
+          description: Invalid policy
+
+    put:
+      operationId: replacePolicy
+      summary: Replace existing policy
+      tags: [policies]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Identifier"
+        - name: dry_run
+          in: query
+          schema:
+            type: boolean
+      requestBody:
+        required: true
+        content:
+          application/x-yaml:
+            schema:
+              type: string
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "201":
+          description: Policy replaced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyLoadResponse"
+        "200":
+          description: Dry run successful
+        "422":
+          description: Invalid policy
+
+    patch:
+      operationId: updatePolicy
+      summary: Update existing policy
+      tags: [policies]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Identifier"
+        - name: dry_run
+          in: query
+          schema:
+            type: boolean
+      requestBody:
+        required: true
+        content:
+          application/x-yaml:
+            schema:
+              type: string
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "201":
+          description: Policy updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyLoadResponse"
+        "200":
+          description: Dry run successful
+        "422":
+          description: Invalid policy
+
+  # ========== RESOURCES ==========
+  /resources/{account}:
+    get:
+      operationId: listResources
+      summary: List resources in account
+      tags: [resources]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - name: kind
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          schema:
+            type: integer
+        - name: count
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: List of resources or count
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: "#/components/schemas/Resource"
+                  - type: object
+                    properties:
+                      count:
+                        type: integer
+
+  /resources/{account}/{kind}:
+    get:
+      operationId: listResourcesByKind
+      summary: List resources by kind
+      tags: [resources]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Kind"
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of resources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Resource"
+
+  /resources/{account}/{kind}/{identifier}:
+    get:
+      operationId: getResource
+      summary: Get a specific resource
+      tags: [resources]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Kind"
+        - $ref: "#/components/parameters/Identifier"
+        - name: check
+          in: query
+          schema:
+            type: boolean
+          description: If true, check permission instead of fetching resource
+        - name: privilege
+          in: query
+          schema:
+            type: string
+          description: Required with check=true
+        - name: role
+          in: query
+          schema:
+            type: string
+          description: Role to check permission for
+        - name: permitted_roles
+          in: query
+          schema:
+            type: boolean
+          description: If present, return roles with the specified privilege
+      responses:
+        "200":
+          description: Resource details or permitted roles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Resource"
+        "204":
+          description: Permission check passed
+        "403":
+          description: Forbidden
+        "404":
+          description: Resource not found
+
+  # ========== ROLES ==========
+  /roles/{account}/{kind}/{identifier}:
+    get:
+      operationId: getRole
+      summary: Get role details
+      tags: [roles]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Kind"
+        - $ref: "#/components/parameters/Identifier"
+        - name: members
+          in: query
+          schema:
+            type: boolean
+          description: If present, return role members
+        - name: memberships
+          in: query
+          schema:
+            type: boolean
+          description: If present, return role memberships
+        - name: all
+          in: query
+          schema:
+            type: boolean
+          description: If present with memberships, return all transitive memberships
+        - name: count
+          in: query
+          schema:
+            type: boolean
+          description: Return count instead of list
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Role details, members, or memberships
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Role"
+                  - type: array
+                    items:
+                      $ref: "#/components/schemas/MembershipGrant"
+                  - type: array
+                    items:
+                      type: string
+                  - type: object
+                    properties:
+                      count:
+                        type: integer
+        "404":
+          description: Role not found
+
+    post:
+      operationId: addRoleMember
+      summary: Add member to role
+      tags: [roles]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Kind"
+        - $ref: "#/components/parameters/Identifier"
+        - name: members
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Required flag to indicate member operation
+        - name: member
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Member role ID to add
+      responses:
+        "204":
+          description: Member added
+        "403":
+          description: Forbidden
+        "404":
+          description: Role or member not found
+
+    delete:
+      operationId: deleteRoleMember
+      summary: Remove member from role
+      tags: [roles]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Kind"
+        - $ref: "#/components/parameters/Identifier"
+        - name: members
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Required flag to indicate member operation
+        - name: member
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Member role ID to remove
+      responses:
+        "204":
+          description: Member removed
+        "403":
+          description: Forbidden
+        "404":
+          description: Membership not found
